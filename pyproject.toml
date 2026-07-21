@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pillclear"
+version = "0.1.0"
+description = "年轻人智能用药安全助手 —— C 端 OTC 用药安全助手"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.110",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "openai>=1.30",
+    "psycopg[binary]>=3.1",
+    "pgvector>=0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "uvicorn[standard]>=0.30",
+    "pytest>=8.0",
+    "respx>=0.21",
+    "httpx>=0.27",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+pythonpath = ["."]

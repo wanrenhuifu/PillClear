@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Env
+.env
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code 本地配置（不入仓库）
+.claude/settings.local.json
+
+# 第三方技能库（由 skills-lock.json 记录来源，用 npx skills@latest 恢复）
+.agents/skills/
+.claude/skills/
+

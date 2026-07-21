@@ -1,0 +1,223 @@
+"""能力边界判断模块（v1）。
+
+铁律落实：处方药 / 疾病诊断 / 特殊人群 / 急症信号属于越界问题，
+一律不提供个性化用药结论，返回写死的固定话术并引导就医或咨询药师。
+
+本版仅使用确定性的关键词 / 正则规则；LLM 意图识别后续再叠加
+（见 detect_category 的扩展点说明）。
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from enum import Enum
+
+
+class BoundaryCategory(str, Enum):
+    """越界问题分类。NONE 表示未触发边界，可正常放行。"""
+
+    EMERGENCY = "emergency"
+    SPECIAL_POPULATION = "special_population"
+    DIAGNOSIS = "diagnosis"
+    PRESCRIPTION = "prescription"
+    NONE = "none"
+
+
+@dataclass(frozen=True)
+class BoundaryResult:
+    """边界判断结果。
+
+    - category: 命中的分类
+    - blocked: 是否越界（True 时应使用 message 直接回复用户）
+    - message: 固定话术，未越界时为 None
+    """
+
+    category: BoundaryCategory
+    blocked: bool
+    message: str | None
+
+
+# —— 固定话术（大白话 + 醒目安全提示 + 引导）——
+
+_MESSAGES: dict[BoundaryCategory, str] = {
+    BoundaryCategory.EMERGENCY: (
+        "⚠️ 这可能是急症信号，别耽误！请立即拨打 120 或尽快前往最近的急诊。\n"
+        "我只是用药安全助手，处理不了紧急情况，你的安全最重要。"
+    ),
+    BoundaryCategory.SPECIAL_POPULATION: (
+        "⚠️ 孕妇、哺乳期、儿童以及有慢性病的人群用药风险特殊，"
+        "我没法给出个性化建议。\n"
+        "请当面咨询医生或药师，让专业人士结合具体情况判断，别自己拿主意。"
+    ),
+    BoundaryCategory.DIAGNOSIS: (
+        "⚠️ 我不能帮你诊断疾病，也不能解读症状或检查报告——这得靠医生。\n"
+        "如果不舒服，建议尽快去医院或线上问诊，把判断交给专业人士。"
+    ),
+    BoundaryCategory.PRESCRIPTION: (
+        "⚠️ 处方药必须凭医生处方使用，我不提供处方药的用法用量建议。\n"
+        "请遵医嘱，或到医院、药店当面咨询医生和药师。"
+    ),
+}
+
+
+# —— 规则表（按分类维护关键词 / 正则）——
+
+# 急症：命中即最高优先级。发热类需"发热 + 不退"组合，避免普通发烧误伤。
+_EMERGENCY_KEYWORDS: tuple[str, ...] = (
+    "呼吸困难",
+    "喘不上气",
+    "喘不过气",
+    "过敏性休克",
+    "严重过敏",
+    "剧烈胸痛",
+    "抽搐",
+    "昏迷",
+    "意识不清",
+    "大出血",
+)
+# 发热 + 不退组合：间隔允许换行与体温读数（[\s\S]{0,10}），
+# 覆盖"发热\n一直不退""高烧39.5℃持续不退"等常见表述。
+_EMERGENCY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(高热|高烧|发烧|发热)[\s\S]{0,10}(不退|退不下|退不了)"),
+)
+
+_SPECIAL_POPULATION_KEYWORDS: tuple[str, ...] = (
+    "孕妇",
+    "怀孕",
+    "孕期",
+    "备孕",
+    "哺乳期",
+    "喂奶",
+    "母乳",
+    "儿童",
+    "小孩",
+    "小孩子",
+    "婴儿",
+    "婴幼儿",
+    "宝宝",
+    "高血压",
+    "糖尿病",
+    "冠心病",
+    "慢性病",
+    "慢病",
+    "肝病",
+    "肾病",
+)
+
+_DIAGNOSIS_KEYWORDS: tuple[str, ...] = (
+    "是不是得了",
+    "得了什么",
+    "什么病",
+    "诊断",
+    "化验单",
+    "检查报告",
+    "体检报告",
+    "验血报告",
+    "是什么毛病",
+)
+
+_PRESCRIPTION_KEYWORDS: tuple[str, ...] = (
+    "处方药",
+    "处方",
+    "抗生素",
+    "阿莫西林",
+    "头孢",
+    "阿奇霉素",
+    "阿普唑仑",
+    "地西泮",
+    "曲马多",
+)
+
+# ── 否定检测 ───────────────────────────────────────────
+# 中文否定词：紧邻关键词之前（无间隔）才视为否定语境，避免误判。
+# 只认"紧邻"关系：旧版的短窗口子串匹配会把嵌在普通词里的单字否定词
+# （不错 / 特别 / 分别 / 无论 …）误当否定语境，从而漏放真实急症信号；
+# 铁律 #3 下漏判比误判危险，因此宁可放过"没有明显的呼吸困难"这类
+# 远距否定（触发拦截、引导就医）也不漏放真实急症。
+# "非"用于放行"非处方药"（OTC 是本产品的核心服务对象）。
+_NEGATION_WORDS: tuple[str, ...] = (
+    "不", "没", "没有", "不是", "不会", "别", "无", "非",
+    "否认", "排除", "并非",
+)
+
+# ── 儿童年龄模式 ───────────────────────────────────────
+# 替换原来过于宽泛的 "岁的" 关键词，仅匹配 0-17 岁。
+_CHILD_AGE_RE = re.compile(r"(?<!\d)(?:1[0-7]|[0-9])\s*岁")
+
+# ── 预编译关键词交替正则（O(N) 单次扫描替代 O(N*K) 多次扫描）──
+
+def _build_alt_re(keywords: tuple[str, ...]) -> re.Pattern[str]:
+    """将关键词编译为单个交替正则，按长度降序排列以优先匹配长词。"""
+    sorted_kw = sorted(keywords, key=len, reverse=True)
+    return re.compile("|".join(re.escape(kw) for kw in sorted_kw))
+
+_EMERGENCY_KW_RE = _build_alt_re(_EMERGENCY_KEYWORDS)
+_SPECIAL_POPULATION_KW_RE = _build_alt_re(_SPECIAL_POPULATION_KEYWORDS)
+_DIAGNOSIS_KW_RE = _build_alt_re(_DIAGNOSIS_KEYWORDS)
+_PRESCRIPTION_KW_RE = _build_alt_re(_PRESCRIPTION_KEYWORDS)
+
+
+def _is_negated(text: str, idx: int) -> bool:
+    """检查 text[idx] 处关键词是否被紧邻其前的否定词否定。"""
+    return any(
+        idx >= len(neg) and text[idx - len(neg):idx] == neg
+        for neg in _NEGATION_WORDS
+    )
+
+
+def _any_keyword_match(text: str, alt_re: re.Pattern[str]) -> bool:
+    """交替正则匹配，跳过否定语境中的命中。"""
+    for m in alt_re.finditer(text):
+        if not _is_negated(text, m.start()):
+            return True
+    return False
+
+
+def _any_pattern_match(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
+    """正则规则匹配（用于发热等组合模式），跳过否定语境。"""
+    for p in patterns:
+        for m in p.finditer(text):
+            if not _is_negated(text, m.start()):
+                return True
+    return False
+
+
+def detect_category(text: str) -> BoundaryCategory:
+    """判定文本所属的越界分类。
+
+    优先级：急症 > 特殊人群 > 诊断 > 处方药 > 放行(NONE)。
+    急症最高优先级，确保"孕妇 + 呼吸困难"等复合场景优先提示就医。
+
+    否定检测：关键词紧邻中文否定词时跳过该命中，
+    避免"我没有呼吸困难""不是处方药"等误判；
+    普通词里嵌的单字（不错 / 特别）不构成否定。
+
+    扩展点：后续可在此函数前置一层 LLM 意图识别，
+    在关键词漏判时补充判定，但结论仍须回落到本枚举与固定话术。
+    """
+
+    if _any_keyword_match(text, _EMERGENCY_KW_RE) or _any_pattern_match(
+        text, _EMERGENCY_PATTERNS
+    ):
+        return BoundaryCategory.EMERGENCY
+    if _any_keyword_match(text, _SPECIAL_POPULATION_KW_RE) or _any_pattern_match(
+        text, (_CHILD_AGE_RE,)
+    ):
+        return BoundaryCategory.SPECIAL_POPULATION
+    if _any_keyword_match(text, _DIAGNOSIS_KW_RE):
+        return BoundaryCategory.DIAGNOSIS
+    if _any_keyword_match(text, _PRESCRIPTION_KW_RE):
+        return BoundaryCategory.PRESCRIPTION
+    return BoundaryCategory.NONE
+
+
+def check_boundary(text: str) -> BoundaryResult:
+    """对外主入口：判断输入是否越界，并给出固定话术。"""
+
+    category = detect_category(text or "")
+    if category is BoundaryCategory.NONE:
+        return BoundaryResult(category=category, blocked=False, message=None)
+    return BoundaryResult(
+        category=category, blocked=True, message=_MESSAGES[category]
+    )
