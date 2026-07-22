@@ -1,0 +1,27 @@
+# 药物 + 酒精相互作用规则：substances 为用户自报摄入物质（前端与药箱一并收集）。
+rules:
+  - id: ibuprofen-alcohol
+    title: 布洛芬 + 酒精
+    severity: warning
+    description: 布洛芬与酒精同服增加胃出血风险
+    conditions:
+      ingredients:
+        - name: 布洛芬
+      substances:
+        - name: 酒精
+    warning: "⚠️ 布洛芬和酒精都会刺激胃黏膜，一起用会明显增加胃出血风险。吃药期间请别喝酒。"
+    confidence: high
+    source: "NHS: Ibuprofen interactions"
+
+  - id: diphenhydramine-alcohol
+    title: 苯海拉明 + 酒精
+    severity: danger
+    description: 苯海拉明与酒精同服加重嗜睡与中枢抑制
+    conditions:
+      ingredients:
+        - name: 苯海拉明
+      substances:
+        - name: 酒精
+    warning: "⚠️ 苯海拉明加酒精会加重嗜睡、头晕，严重时可能抑制呼吸。服药期间别喝酒，也别开车或操作机械。"
+    confidence: medium
+    source: "MedlinePlus: Diphenhydramine"

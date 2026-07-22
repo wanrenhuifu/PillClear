@@ -1,35 +1,53 @@
-"""PillClear API 路由：用药咨询 / 健康检查。"""
+"""PillClear API 路由：用药咨询 / 健康检查。
+
+/chat 是一个编排 RAG + 规则引擎 + LLM 的智能体，而非裸 LLM 问答：
+    安全边界（关键词 + LLM 补漏）→ 意图分类 → 按意图检索 RAG
+    →（冲突意图）确定性规则引擎检测 → LLM 生成大白话 → 各级兜底 → 免责声明。
+
+铁律落实：
+- #1 冲突 / 剂量判断走规则引擎，LLM 只翻译结论；
+- #2 回答强制带说明书引用，代码对「无引用」兜底；
+- #3 能力边界关键词为主、LLM 补漏，结论回落固定话术；
+- #4 低置信度 / 未收录药品明说，不静默；
+- #5 代码追加固定免责声明。
+"""
 
 from __future__ import annotations
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
-from app.api.deps import get_llm_client, get_retriever, get_settings
-from app.api.schemas import ChatRequest, ChatResponse, LLMAnswer
+from app.api.deps import (
+    get_llm_client,
+    get_medbox_service,
+    get_retriever,
+    get_settings,
+)
+from app.api.schemas import Citation, ChatRequest, ChatResponse, LLMAnswer
 from app.config import Settings
-from app.core.safety import check_boundary
+from app.core.safety import check_boundary_with_llm
 from app.llm.client import LLMClient
 from app.llm.errors import LLMRetryExhausted
+from app.medbox.schemas import ConflictReport, Medbox, MedboxItem
+from app.medbox.service import MedboxService
+from app.prompts.chat import (
+    build_chat_messages,
+    format_conflict_report_for_prompt,
+)
+from app.prompts.intent import (
+    IntentCategory,
+    IntentResult,
+    build_intent_messages,
+)
 from app.rag.retriever import Retriever
+
+logger = logging.getLogger("app.api")
 
 router = APIRouter()
 
-# ── 提示词 & 固定文案 ──────────────────────────────────────
-
-_CHAT_SYSTEM_PROMPT = (
-    "你是 PillClear，一个面向 18-30 岁年轻人的用药安全助手。"
-    "你的任务是帮用户理解非处方药（OTC）和保健品的说明书，用大白话解释。\n\n"
-    "重要规则：\n"
-    "- 语气年轻、简短直接，用日常口语，像朋友在聊天。\n"
-    "- 绝不能编造药物信息；拿不准时必须明确说「不确定」并建议咨询药师。\n"
-    "- 只回答非处方药和保健品相关问题。\n"
-    "- 回答中不要给出诊断，不要推荐处方药。\n"
-    "- 如果用户描述的症状听起来紧急（比如呼吸困难、剧烈胸痛），"
-    "提醒他们立刻就医，不要只靠吃药。\n\n"
-    "请以 JSON 格式输出："
-    '{"answer": "你的大白话回答", "confidence": 0.0~1.0 的置信度}'
-)
+# ── 固定文案 ─────────────────────────────────────────────────
 
 _DISCLAIMER = (
     "\n\n---\n"
@@ -46,9 +64,85 @@ _LOW_CONFIDENCE_NOTE = (
     "建议直接咨询药师确认后再用药，别自己拿主意。"
 )
 
-_SOURCES_NOTE_RAG_PENDING = (
-    "📖 说明书原文检索功能开发中，以上回答仅供参考，请务必查阅原药品说明书。"
+# 铁律 #2 代码兜底：LLM 回答带了用药建议但没有引用来源时追加提示。
+# prompt 已要求模型必须引用，此处是最后一道防线。
+_NO_CITATION_NOTE = (
+    "\n\n⚠️ 我注意到上面的回答没有引用具体的说明书原文，"
+    "建议你查阅原药品说明书确认，或咨询药师。"
 )
+
+# 意图分类用低 max_tokens 压低延迟（任务三：端到端 < 1s 的设计目标）。
+_INTENT_MAX_TOKENS = 150
+
+
+# ── 编排辅助函数 ─────────────────────────────────────────────
+
+
+def _classify_intent(llm_client: LLMClient, query: str) -> IntentResult:
+    """LLM 意图分类（任务三）。失败降级为 drug_info，绝不阻断主流程。"""
+    try:
+        return llm_client.complete_json(
+            build_intent_messages(query),
+            IntentResult,
+            max_tokens=_INTENT_MAX_TOKENS,
+        )
+    except Exception as exc:  # noqa: BLE001 - 分类失败必须降级而非 502
+        logger.warning("意图分类失败，降级为 drug_info：%s", exc)
+        return IntentResult(intent=IntentCategory.DRUG_INFO, confidence=0.0)
+
+
+def _merge_citations(retriever: Retriever, terms: list[str]) -> list[Citation]:
+    """对多个检索词逐一检索并去重合并（保持首次出现顺序）。"""
+    merged: list[Citation] = []
+    seen: set[tuple[str, str, str]] = set()
+    for term in terms:
+        term = term.strip()
+        if not term:
+            continue
+        for c in retriever.search(term):
+            key = (c.drug_name, c.section, c.excerpt)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(c)
+    return merged
+
+
+def _retrieve_citations(
+    retriever: Retriever, query: str, intent: IntentResult
+) -> list[Citation]:
+    """按意图选择 RAG 检索策略（任务三）。
+
+    - conflict_check：用提取的 drug_names 逐一检索，合并结果；
+    - lifestyle_interaction：用 drug_names + lifestyle_substances 检索；
+    - drug_info / general_health / 未提取到药名：用原始 query 检索。
+    """
+    if intent.intent is IntentCategory.CONFLICT_CHECK and intent.drug_names:
+        return _merge_citations(retriever, intent.drug_names)
+    if intent.intent is IntentCategory.LIFESTYLE_INTERACTION:
+        terms = [*intent.drug_names, *intent.lifestyle_substances]
+        if terms:
+            return _merge_citations(retriever, terms)
+    return retriever.search(query)
+
+
+def _run_conflict_check(
+    service: MedboxService, intent: IntentResult
+) -> ConflictReport:
+    """用意图提取的药名跑确定性规则引擎（任务四，零 LLM，铁律 #1）。
+
+    /chat 场景只有药名、没有 drug_id，而 check_conflicts 按 brand_name 解析成分、
+    drug_id 仅作内部 map 键——故以枚举序号占位 drug_id，未入库药品由服务层
+    落入 unresolved_drugs 明示（铁律 #4）。
+    """
+    items = [
+        MedboxItem(drug_id=idx + 1, brand_name=name.strip())
+        for idx, name in enumerate(intent.drug_names)
+        if name.strip()
+    ]
+    return service.check_conflicts(
+        Medbox(items=items), intent.lifestyle_substances or None
+    )
 
 
 # ── 路由 ───────────────────────────────────────────────────
@@ -65,15 +159,18 @@ async def chat(
     settings: Settings = Depends(get_settings),
     llm_client: LLMClient = Depends(get_llm_client),
     retriever: Retriever = Depends(get_retriever),
+    medbox_service: MedboxService = Depends(get_medbox_service),
 ) -> ChatResponse:
-    """用药咨询主入口。
+    """用药咨询主入口（编排 RAG + 规则引擎 + LLM）。
 
-    流程：安全边界检查 → 引用检索 → LLM 生成大白话回答
-    → 低置信度兜底 → 追加免责声明。
+    流程：安全边界（关键词 + LLM 补漏）→ 意图分类 → 按意图检索 RAG
+    →（冲突意图）规则引擎检测 → LLM 生成 → 低置信度 / 无引用兜底 → 免责声明。
     """
 
-    # 1. 安全边界检查（铁律 #3）
-    boundary = check_boundary(request.query)
+    # 1. 安全边界（铁律 #3：关键词为主、LLM 补漏，结论回落固定话术）
+    boundary = await run_in_threadpool(
+        check_boundary_with_llm, request.query, llm_client
+    )
     if boundary.blocked:
         return ChatResponse(
             blocked=True,
@@ -82,15 +179,33 @@ async def chat(
             disclaimer=None,
         )
 
-    # 2. 引用检索（铁律 #2：回答必须带引用）。当前为 NullRetriever 占位，
-    #    D3 pgvector 检索就绪后替换 get_retriever 即生效，路由无需改动。
-    citations = await run_in_threadpool(retriever.search, request.query)
+    # 2. 意图分类（任务三：失败降级 drug_info，不阻断）
+    intent = await run_in_threadpool(_classify_intent, llm_client, request.query)
 
-    # 3. 通过安全边界 → LLM 生成回答
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": _CHAT_SYSTEM_PROMPT},
-        {"role": "user", "content": request.query},
-    ]
+    # 3. 按意图检索 RAG（铁律 #2：回答必须带引用）
+    citations = await run_in_threadpool(
+        _retrieve_citations, retriever, request.query, intent
+    )
+
+    # 4. 冲突意图 → 确定性规则引擎检测（任务四，铁律 #1：零 LLM）
+    conflict_context: str | None = None
+    has_conflict_findings = False
+    if intent.intent in (
+        IntentCategory.CONFLICT_CHECK,
+        IntentCategory.LIFESTYLE_INTERACTION,
+    ):
+        report = await run_in_threadpool(_run_conflict_check, medbox_service, intent)
+        conflict_context = format_conflict_report_for_prompt(report)
+        has_conflict_findings = bool(
+            report.triggered_rules
+            or report.overlap.warnings
+            or report.unresolved_drugs
+        )
+
+    # 5. 构造含 RAG + 冲突结论的 messages 并调用 LLM
+    messages = build_chat_messages(
+        request.query, citations, conflict_context=conflict_context
+    )
 
     try:
         llm_answer = await run_in_threadpool(
@@ -102,12 +217,18 @@ async def chat(
             detail="AI 服务暂时不可用，请稍后重试。",
         ) from exc
 
-    # 4. 低置信度兜底（铁律 #4：拿不准必须明说"不确定"）
+    # 6. 低置信度兜底（铁律 #4：拿不准必须明说"不确定"）
     full_answer = llm_answer.answer
     if llm_answer.confidence < _LOW_CONFIDENCE_THRESHOLD:
         full_answer += _LOW_CONFIDENCE_NOTE
 
-    # 5. 代码追加固定免责声明（铁律 #5）
+    # 7. 引用缺失兜底（铁律 #2 代码防线）。
+    #    若规则引擎已给出确定性冲突结论，则结论来源是规则引擎而非说明书检索，
+    #    不再追加「查阅说明书」提示，避免与冲突结论互相打架。
+    if not llm_answer.citations_used and not has_conflict_findings:
+        full_answer += _NO_CITATION_NOTE
+
+    # 8. 代码追加固定免责声明（铁律 #5）
     full_answer += _DISCLAIMER
 
     return ChatResponse(
@@ -115,7 +236,6 @@ async def chat(
         answer=full_answer,
         confidence=llm_answer.confidence,
         citations=citations,
-        # 有引用即视为 RAG 就绪，不再显示"开发中"提示
-        sources_note=None if citations else _SOURCES_NOTE_RAG_PENDING,
+        sources_note=None,
         disclaimer=_DISCLAIMER,
     )

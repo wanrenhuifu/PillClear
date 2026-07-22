@@ -1,0 +1,31 @@
+# 药物-药物 / 保健品相互作用规则。
+# 铁律 #4：保健品相互作用证据不足时按保守原则提示，confidence 标 medium/low，前端降低断言力度。
+#
+# DSL 边界说明：substances 通道兼表「用户自报的非成分因素」——避孕药不会作为
+# OTC 药品成分出现在 drugs 表里，故作为 substance 与酒精一并收集。这是当前 DSL
+# 的明示边界，后续如需区分「物质」与「药品类别」再扩展模型。
+rules:
+  - id: aspirin-ibuprofen
+    title: 阿司匹林 + 布洛芬
+    severity: warning
+    description: 布洛芬可能削弱阿司匹林的心血管保护作用
+    conditions:
+      ingredients:
+        - name: 阿司匹林
+        - name: 布洛芬
+    warning: "⚠️ 布洛芬可能削弱阿司匹林的心血管保护作用。如必须同用，先服阿司匹林并间隔至少 30 分钟，具体请咨询药师。"
+    confidence: medium
+    source: "FDA: Ibuprofen and aspirin interaction"
+
+  - id: st-johns-wort-contraceptive
+    title: 圣约翰草 + 口服避孕药
+    severity: warning
+    description: 圣约翰草可能降低口服避孕药效果
+    conditions:
+      ingredients:
+        - name: 圣约翰草
+      substances:
+        - name: 避孕药
+    warning: "⚠️ 圣约翰草可能加快避孕药代谢、降低避孕效果，增加意外怀孕风险。同用期间请加用其他避孕措施，并咨询医生或药师。"
+    confidence: medium
+    source: "NIH ODS: St. John's Wort"

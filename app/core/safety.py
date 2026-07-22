@@ -9,9 +9,18 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
+
+from app.prompts.safety import SafetyLLMResult, build_safety_messages
+
+if TYPE_CHECKING:
+    from app.llm.client import LLMClient
+
+logger = logging.getLogger("app.core.safety")
 
 
 class BoundaryCategory(str, Enum):
@@ -221,3 +230,70 @@ def check_boundary(text: str) -> BoundaryResult:
     return BoundaryResult(
         category=category, blocked=True, message=_MESSAGES[category]
     )
+
+
+# ── LLM 二次分类（任务五：关键词放行后补漏，减少漏判）──────────────
+
+# LLM 分类置信度阈值：低于此值视为「拿不准」，回落到关键词结果（NONE）。
+# 铁律 #4：宁可不拦也不误拦普通 OTC 咨询——但关键词已拦的绝不会被 LLM 放行
+# （见 check_boundary_with_llm 的短路：blocked 直接返回，不进 LLM）。
+_LLM_CONFIDENCE_THRESHOLD = 0.7
+
+# 低 max_tokens：分类任务只需输出一个小 JSON，压低生成长度以控制端到端延迟。
+_LLM_MAX_TOKENS = 60
+
+
+def classify_with_llm(text: str, llm: LLMClient) -> BoundaryResult:
+    """用 LLM 对「关键词放行」的文本做二次越界判断（补漏）。
+
+    铁律 #3/#4：
+    - LLM 结论必须回落到 BoundaryCategory 枚举 + 固定话术，不自由发挥；
+    - 低置信度 / 非法分类 / 调用失败一律回落到 NONE（关键词结果），不阻断 /chat。
+
+    本函数仅在关键词返回 NONE 时被调用（见 check_boundary_with_llm），
+    因此「回落到关键词结果」即返回放行（NONE）。
+    """
+
+    try:
+        result = llm.complete_json(
+            build_safety_messages(text or ""),
+            SafetyLLMResult,
+            max_tokens=_LLM_MAX_TOKENS,
+        )
+    except Exception as exc:  # noqa: BLE001 - LLM 失败必须降级，不得阻断 /chat
+        logger.warning("safety LLM 分类失败，降级到关键词结果（放行）：%s", exc)
+        return BoundaryResult(
+            category=BoundaryCategory.NONE, blocked=False, message=None
+        )
+
+    # 非法 category 字符串 → 回落到 NONE（不得因模型乱报而误拦）
+    try:
+        category = BoundaryCategory(result.category)
+    except ValueError:
+        logger.warning("safety LLM 返回非法分类 %r，降级放行", result.category)
+        return BoundaryResult(
+            category=BoundaryCategory.NONE, blocked=False, message=None
+        )
+
+    # none 或低置信度 → 以关键词结果（NONE）为准
+    if category is BoundaryCategory.NONE or result.confidence < _LLM_CONFIDENCE_THRESHOLD:
+        return BoundaryResult(
+            category=BoundaryCategory.NONE, blocked=False, message=None
+        )
+
+    # 高置信度命中越界类别 → 回落到固定话术（铁律 #3）
+    return BoundaryResult(category=category, blocked=True, message=_MESSAGES[category])
+
+
+def check_boundary_with_llm(text: str, llm: LLMClient) -> BoundaryResult:
+    """对外主入口（带 LLM 补漏）：关键词判断 + 放行后的 LLM 二次判断。
+
+    优先级：关键词规则是主防线，命中即拦（绝不交给 LLM 放行）；
+    仅当关键词放行（NONE）时才调用 LLM 补漏，减少漏判。
+    LLM 失败 / 低置信度时维持关键词的放行结论，不阻断 /chat。
+    """
+
+    keyword_result = check_boundary(text)
+    if keyword_result.blocked:
+        return keyword_result
+    return classify_with_llm(text, llm)

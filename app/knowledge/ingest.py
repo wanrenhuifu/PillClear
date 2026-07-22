@@ -23,18 +23,14 @@ from app.knowledge.repository import (
 )
 from app.knowledge.schemas import DrugRecord, IngredientList
 from app.llm.client import LLMClient
+from app.prompts.ingest import INGREDIENT_SYSTEM_PROMPT
 
 logger = logging.getLogger("app.knowledge")
 
 # 说明书成份章节名的子串特征：【成份】【成分】【主要成份】等均命中。
 _INGREDIENT_SECTIONS = ("成份", "成分")
 
-_INGREDIENT_SYSTEM_PROMPT = (
-    "你是药品说明书信息抽取器。只依据给定的【成份】原文，抽取活性成分列表，"
-    "不要臆造、不要补充原文没有的成分或含量。"
-    '严格输出 JSON：{"ingredients":[{"name":成分名,"amount":数值或null,"unit":单位或null}]}。'
-    "含量未标注时 amount 与 unit 用 null；数值只保留数字，单位单独放 unit。"
-)
+_INGREDIENT_SYSTEM_PROMPT = INGREDIENT_SYSTEM_PROMPT  # 从 app.prompts.ingest 导入
 
 
 def extract_ingredients(llm: LLMClient, section_text: str) -> list:

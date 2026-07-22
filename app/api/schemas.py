@@ -55,3 +55,7 @@ class LLMAnswer(BaseModel):
 
     answer: str = Field(..., description="大白话回答")
     confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="置信度")
+    citations_used: list[str] = Field(
+        default_factory=list,
+        description="回答中引用了的药品名列表（铁律 #2：有用药建议时必须非空）",
+    )

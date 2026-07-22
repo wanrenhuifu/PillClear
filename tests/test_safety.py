@@ -6,7 +6,14 @@
 
 import pytest
 
-from app.core.safety import BoundaryCategory, check_boundary
+from app.core.safety import (
+    BoundaryCategory,
+    check_boundary,
+    check_boundary_with_llm,
+    classify_with_llm,
+)
+from app.llm.errors import LLMRetryExhausted
+from app.prompts.safety import SafetyLLMResult
 
 
 class TestPrescription:
@@ -220,3 +227,99 @@ class TestPriority:
         r = check_boundary("孕妇吃完药后呼吸困难了")
         assert r.blocked is True
         assert r.category is BoundaryCategory.EMERGENCY
+
+
+# ── LLM 二次分类（任务五）────────────────────────────────────
+
+
+class FakeLLM:
+    """可编排的 LLM 替身：返回预设 SafetyLLMResult 或抛异常。"""
+
+    def __init__(self, result: SafetyLLMResult | None = None, exc: Exception | None = None):
+        self._result = result
+        self._exc = exc
+        self.calls: list[dict] = []
+
+    def complete_json(self, messages, response_model, **kwargs):
+        self.calls.append({"messages": messages, "kwargs": kwargs})
+        if self._exc is not None:
+            raise self._exc
+        return self._result
+
+
+class TestClassifyWithLLM:
+    """classify_with_llm：关键词放行后的 LLM 补漏，结论回落枚举 + 固定话术。"""
+
+    def test_high_confidence_boundary_blocks(self):
+        llm = FakeLLM(result=SafetyLLMResult(category="prescription", confidence=0.95))
+        r = classify_with_llm("这个药怎么吃", llm)
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.PRESCRIPTION
+        assert r.message  # 回落到固定话术
+
+    def test_high_confidence_emergency_blocks(self):
+        llm = FakeLLM(result=SafetyLLMResult(category="emergency", confidence=0.9))
+        r = classify_with_llm("吃完药整个人不对劲", llm)
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.EMERGENCY
+        assert "120" in r.message
+
+    def test_low_confidence_falls_back_to_none(self):
+        """低置信度 → 以关键词结果（NONE）为准，放行。"""
+        llm = FakeLLM(result=SafetyLLMResult(category="prescription", confidence=0.3))
+        r = classify_with_llm("这个药怎么吃", llm)
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+    def test_category_none_passes(self):
+        llm = FakeLLM(result=SafetyLLMResult(category="none", confidence=0.99))
+        r = classify_with_llm("布洛芬怎么吃", llm)
+        assert r.blocked is False
+
+    def test_invalid_category_falls_back_to_none(self):
+        """LLM 乱报分类 → 回落 NONE，不得误拦。"""
+        llm = FakeLLM(result=SafetyLLMResult(category="galaxy_brain", confidence=0.99))
+        r = classify_with_llm("布洛芬怎么吃", llm)
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+    def test_llm_exception_degrades_to_none(self):
+        """LLM 调用失败 → 降级放行，不阻断。"""
+        llm = FakeLLM(exc=LLMRetryExhausted(3, ValueError("boom")))
+        r = classify_with_llm("布洛芬怎么吃", llm)
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+    def test_uses_low_max_tokens(self):
+        """分类调用压低 max_tokens 以控制延迟（设计目标）。"""
+        llm = FakeLLM(result=SafetyLLMResult(category="none", confidence=0.9))
+        classify_with_llm("布洛芬怎么吃", llm)
+        assert llm.calls[0]["kwargs"].get("max_tokens") is not None
+
+
+class TestCheckBoundaryWithLLM:
+    """check_boundary_with_llm：关键词为主，LLM 仅在放行时补漏。"""
+
+    def test_keyword_block_short_circuits_no_llm(self):
+        """关键词已拦 → 直接返回，绝不调用 LLM（LLM 无权放行）。"""
+        llm = FakeLLM(exc=AssertionError("不应被调用"))
+        r = check_boundary_with_llm("孕妇能吃布洛芬吗", llm)
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.SPECIAL_POPULATION
+        assert llm.calls == []  # LLM 未被触达
+
+    def test_keyword_pass_then_llm_blocks(self):
+        """关键词放行、LLM 高置信度补漏拦截。"""
+        llm = FakeLLM(result=SafetyLLMResult(category="diagnosis", confidence=0.9))
+        r = check_boundary_with_llm("我这是不是大病", llm)
+        # 关键词对「是不是大病」不命中 diagnosis 关键词 → 交给 LLM
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.DIAGNOSIS
+        assert len(llm.calls) == 1
+
+    def test_keyword_pass_llm_fail_still_passes(self):
+        """关键词放行、LLM 失败 → 维持放行，不阻断 /chat。"""
+        llm = FakeLLM(exc=RuntimeError("network down"))
+        r = check_boundary_with_llm("布洛芬能空腹吃吗", llm)
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE

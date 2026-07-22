@@ -1,0 +1,26 @@
+# 重复成分规则：药箱中 ≥2 个条目含同一成分（min_count: 2）。
+# warning 里的 {count}/{total_mg} 由 engine.format_warning 在运行期填充（纯代码，无 LLM，铁律 #1）。
+rules:
+  - id: acetaminophen-overlap
+    title: 对乙酰氨基酚重复过量
+    severity: danger
+    description: 两种或以上药物都含有对乙酰氨基酚，叠加可能超过每日安全剂量（4000mg）
+    conditions:
+      ingredients:
+        - name: 对乙酰氨基酚
+          min_count: 2
+    warning: "⚠️ 你在吃 {count} 种含对乙酰氨基酚的药，每日合计约 {total_mg}mg。超过 4000mg/天可能伤肝，建议只保留一种，或咨询药师确认间隔与总量。"
+    confidence: high
+    source: FDA 对乙酰氨基酚安全指南
+
+  - id: ibuprofen-overlap
+    title: 布洛芬重复使用
+    severity: warning
+    description: 两种或以上药物都含有布洛芬，叠加可能超过 OTC 每日剂量（1200mg）
+    conditions:
+      ingredients:
+        - name: 布洛芬
+          min_count: 2
+    warning: "⚠️ 你在吃 {count} 种含布洛芬的药，每日合计约 {total_mg}mg（OTC 上限 1200mg/天）。超量会增加胃肠道与肾脏风险，建议只保留一种。"
+    confidence: high
+    source: "NHS: Ibuprofen dosage"

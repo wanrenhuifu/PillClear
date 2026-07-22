@@ -31,8 +31,8 @@
 - **测试**：pytest，TDD 优先。
 
 ## 四、当前进度
-已完成：项目骨架、`app/llm` 客户端抽象层（JSON mode + Pydantic 校验 + 自动重试 + usage 日志）、`app/core/safety.py` 边界判断 v1（关键词/规则版）、全套单元测试（31 项全绿，HTTP 层用 respx mock）。
-待办：RAG 说明书检索、YAML 规则引擎、个人药箱与成分叠加纯函数、用药提醒、FastAPI 路由、Supabase 迁移 SQL、safety 的 LLM 意图识别增强。
+已完成：项目骨架、`app/llm` 客户端抽象层（JSON mode + Pydantic 校验 + 自动重试 + usage 日志）、`app/core/safety.py` 边界判断 v1（关键词/规则版）、全套单元测试（31 项全绿，HTTP 层用 respx mock）、D3 pgvector 说明书检索（`app/rag/retriever.py::PgVectorRetriever`：cosine `<=>` 近邻检索 `insert_chunks`，excerpt 取 chunk 前 200 字符保证精确子串；连接/查询/向量化失败降级为空引用不炸 /chat；`get_retriever` 按 `database_url` 是否配置在 PgVectorRetriever / NullRetriever 间切换）、D4 YAML 规则引擎 + 个人药箱（`app/rules/`：6 条内置规则 + 确定性解释器，冲突判断零 LLM；`app/medbox/`：成分叠加纯函数 + mg 单位归一化 `app/core/units.py`，`POST /api/v1/medbox/check` 返回 ConflictReport；未入库药品明示 `unresolved_drugs` 不静默忽略）、D5 `/chat` 智能体化 + 提示词集中管理（`app/prompts/`：`chat.py` 系统 prompt 带 `{rag_context}` 注入 + 冲突结论槽位、`intent.py` 四分类意图、`safety.py` 边界 LLM 分类、`ingest.py` 成分抽取；`/chat` 编排＝安全边界（关键词 + LLM 补漏 `check_boundary_with_llm`）→ 意图分类（失败降级 `drug_info`）→ 按意图 RAG 检索 → 冲突意图走确定性规则引擎并把 ConflictReport 注入 prompt（LLM 只翻译不改结论）→ 低置信度/无引用兜底 → 免责声明；`LLMAnswer.citations_used` 记录自报引用；单测累计 184 项全绿）。
+待办：用药提醒、Supabase 迁移 SQL。
 
 ## 五、工作约定
 - 新功能先写测试（TDD）；药学结论类逻辑必须有纯函数 + 单测覆盖。
