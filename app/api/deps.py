@@ -13,9 +13,17 @@ from app.knowledge.repository import (
     InMemoryDrugRepository,
     PostgresDrugRepository,
 )
+from app.knowledge.sqlite_repo import SQLiteDrugRepository
 from app.llm import LLMClient
+from app.medbox.repository import (
+    InMemoryUserMedboxRepository,
+    PostgresUserMedboxRepository,
+    UserMedboxRepository,
+)
 from app.medbox.service import MedboxService
+from app.medbox.sqlite_medbox_repo import SQLiteUserMedboxRepository
 from app.rag.retriever import NullRetriever, PgVectorRetriever, Retriever
+from app.rag.sqlite_retriever import SQLiteVectorRetriever
 from app.rules.engine import DEFAULT_RULES_DIR, load_rules
 from app.rules.schemas import RuleSet
 
@@ -24,6 +32,21 @@ from app.rules.schemas import RuleSet
 def get_settings() -> Settings:
     """全局 Settings 单例（首次调用时从 .env 加载，后续命中缓存）。"""
     return Settings()
+
+
+def _resolve_backend(settings: Settings) -> str:
+    """后端选择：显式 pillclear_backend 优先；否则配了 database_url 用 supabase，
+    未配置则回落本地 sqlite（B 部分：无外部依赖的默认后端）。"""
+    if settings.pillclear_backend:
+        return settings.pillclear_backend
+    return "supabase" if settings.database_url else "sqlite"
+
+
+def _resolve_db_path(settings: Settings) -> str:
+    """SQLite 数据库文件路径：data_dir（自动按平台解析）/pillclear.db。"""
+    data_dir = settings.resolved_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return str(data_dir / "pillclear.db")
 
 
 # Settings 不可哈希（pydantic BaseModel），不能用 lru_cache 缓存依赖它的工厂；
@@ -59,11 +82,20 @@ def get_retriever(
     entry = _RETRIEVERS.get(id(settings))
     if entry is not None:
         return entry[1]
-    retriever: Retriever = (
-        PgVectorRetriever(embedder=Embedder(settings), dsn=settings.database_url)
-        if settings.database_url
-        else NullRetriever()
-    )
+    if settings.pillclear_backend == "sqlite":
+        # 显式 sqlite 后端 → 本地 sqlite-vec 检索。
+        retriever: Retriever = SQLiteVectorRetriever(
+            embedder=Embedder(settings), db_path=_resolve_db_path(settings)
+        )
+    else:
+        # 现有逻辑一字不改：配置 DATABASE_URL → pgvector；未配置 → NullRetriever。
+        # 检索器不随 _resolve_backend 自动切 sqlite——无配置时保留「开发中」占位
+        # （既有测试与 /chat 降级语义所系），仅在显式 pillclear_backend=sqlite 时启用。
+        retriever = (
+            PgVectorRetriever(embedder=Embedder(settings), dsn=settings.database_url)
+            if settings.database_url
+            else NullRetriever()
+        )
     _RETRIEVERS[id(settings)] = (settings, retriever)
     return retriever
 
@@ -84,23 +116,55 @@ _REPOSITORIES: dict[int, tuple[Settings, DrugRepository]] = {}
 def get_drug_repository(
     settings: Settings = Depends(get_settings),
 ) -> DrugRepository:
-    """药品仓储：配置了 DATABASE_URL → Postgres；未配置 → 空内存仓储
-    （降级：所有药品都会落到 unresolved_drugs，端点仍正常应答）。"""
+    """药品仓储：sqlite 后端 → 本地 SQLite；supabase 且配置了 DATABASE_URL →
+    Postgres；supabase 但缺连接串 → 空内存仓储降级（所有药品落 unresolved_drugs，
+    端点仍正常应答）。"""
     entry = _REPOSITORIES.get(id(settings))
     if entry is not None:
         return entry[1]
-    repo: DrugRepository = (
-        PostgresDrugRepository(settings.database_url)
-        if settings.database_url
-        else InMemoryDrugRepository()
-    )
+    backend = _resolve_backend(settings)
+    if backend == "sqlite":
+        repo: DrugRepository = SQLiteDrugRepository(_resolve_db_path(settings))
+    elif settings.database_url:
+        repo = PostgresDrugRepository(settings.database_url)
+    else:
+        repo = InMemoryDrugRepository()
     _REPOSITORIES[id(settings)] = (settings, repo)
+    return repo
+
+
+# 同 _REPOSITORIES：Settings 不可哈希，按 id 缓存并钉住 Settings 引用。
+_USER_REPOSITORIES: dict[int, tuple[Settings, UserMedboxRepository]] = {}
+
+
+def get_user_medbox_repository(
+    settings: Settings = Depends(get_settings),
+    drug_repo: DrugRepository = Depends(get_drug_repository),
+) -> UserMedboxRepository:
+    """药箱仓储：跟随药品仓储的后端类型，保持同一存储一致性。
+
+    - drug_repo 是 SQLiteDrugRepository → SQLite 药箱仓储，共享其连接（FK 已开）；
+    - drug_repo 是 PostgresDrugRepository → Postgres 药箱仓储；
+    - drug_repo 是 InMemory（测试覆盖 / 降级）→ 内存药箱仓储，避免无谓建文件。
+    """
+    entry = _USER_REPOSITORIES.get(id(settings))
+    if entry is not None:
+        return entry[1]
+    if isinstance(drug_repo, SQLiteDrugRepository):
+        repo: UserMedboxRepository = SQLiteUserMedboxRepository(drug_repo.connection)
+    elif isinstance(drug_repo, PostgresDrugRepository):
+        repo = PostgresUserMedboxRepository(settings.database_url)
+    else:
+        # InMemory（测试覆盖 / 无库降级）：无 drugs 表可 JOIN，brand 回退占位名。
+        repo = InMemoryUserMedboxRepository()
+    _USER_REPOSITORIES[id(settings)] = (settings, repo)
     return repo
 
 
 def get_medbox_service(
     rules: RuleSet = Depends(get_rule_set),
     repo: DrugRepository = Depends(get_drug_repository),
+    user_repo: UserMedboxRepository = Depends(get_user_medbox_repository),
 ) -> MedboxService:
-    """药箱服务：无状态编排器，每请求新建（D4）。"""
-    return MedboxService(rules, repo)
+    """药箱服务：无状态编排器，每请求新建（D4）。user_repo 供持久化端点使用。"""
+    return MedboxService(rules, repo, user_repo=user_repo)

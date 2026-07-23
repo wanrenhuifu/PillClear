@@ -1,7 +1,10 @@
 """个人药箱数据模型（D4）。
 
-MVP 阶段药箱无服务端持久化：客户端持有药箱、随请求上送，
-服务端只按 brand_name 从 drugs 表读成分做冲突检测。
+药箱支持两种用法：
+- 无状态冲突检测：客户端随请求上送 items（POST /medbox/check）。
+- 服务端持久化：用户「我的常用药」存于 user_medbox 表，MVP 阶段用
+  device_id 标识用户、不做登录（见 app/medbox/repository.py）。
+服务端按 brand_name 从 drugs 表读成分做冲突检测。
 """
 
 from __future__ import annotations
@@ -59,6 +62,21 @@ class MedboxCheckRequest(BaseModel):
     lifestyle_substances: list[str] | None = None  # 用户自报摄入物质（如「酒精」）
 
 
+class MedboxItemAddRequest(BaseModel):
+    """POST /api/v1/medbox/{device_id}/items 请求体：添加/更新药箱中的一项。"""
+
+    drug_id: int
+    brand_name: str = Field(..., min_length=1)
+    dosage_per_day: int | None = Field(default=None, ge=1)
+
+
+class MedboxResponse(BaseModel):
+    """药箱持久化端点的统一响应：设备标识 + 当前完整药箱。"""
+
+    device_id: str
+    items: list[MedboxItem]
+
+
 __all__ = [
     "MedboxItem",
     "Medbox",
@@ -66,4 +84,6 @@ __all__ = [
     "OverlapResult",
     "ConflictReport",
     "MedboxCheckRequest",
+    "MedboxItemAddRequest",
+    "MedboxResponse",
 ]

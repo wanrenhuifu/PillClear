@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.knowledge.repository import DrugRepository
 from app.knowledge.schemas import Ingredient
 from app.medbox.calculator import calculate_ingredient_totals, check_overlap
+from app.medbox.repository import UserMedboxRepository
 from app.medbox.schemas import ConflictReport, Medbox, MedboxItem
 from app.rules.engine import check_conflicts, count_matches, format_warning
 from app.rules.schemas import Rule, RuleSet
@@ -17,9 +18,51 @@ from app.rules.schemas import Rule, RuleSet
 class MedboxService:
     """药箱业务逻辑：CRUD + 冲突检查编排。"""
 
-    def __init__(self, rules: RuleSet, repo: DrugRepository) -> None:
+    def __init__(
+        self,
+        rules: RuleSet,
+        repo: DrugRepository,
+        user_repo: UserMedboxRepository | None = None,
+    ) -> None:
         self._rules = rules
         self._repo = repo
+        # user_repo 可选：无状态冲突检测（/medbox/check）不需要它；
+        # 持久化端点（get/add/remove_from_medbox）必须注入，否则抛 RuntimeError。
+        self._user_repo = user_repo
+
+    def _require_user_repo(self) -> UserMedboxRepository:
+        if self._user_repo is None:
+            raise RuntimeError("药箱持久化未配置：MedboxService 缺少 user_repo")
+        return self._user_repo
+
+    def get_medbox(self, device_id: str) -> Medbox:
+        """获取用户保存的药箱，无记录则返回空 Medbox。"""
+        user_repo = self._require_user_repo()
+        user_id = user_repo.get_or_create_user(device_id)
+        return Medbox(
+            items=[
+                MedboxItem(
+                    drug_id=row["drug_id"],
+                    brand_name=row["brand_name"],
+                    dosage_per_day=row["dosage_per_day"],
+                )
+                for row in user_repo.get_items(user_id)
+            ]
+        )
+
+    def add_to_medbox(self, device_id: str, item: MedboxItem) -> Medbox:
+        """添加/更新一个药品到药箱，返回完整药箱。"""
+        user_repo = self._require_user_repo()
+        user_id = user_repo.get_or_create_user(device_id)
+        user_repo.upsert_item(user_id, item.drug_id, item.dosage_per_day)
+        return self.get_medbox(device_id)
+
+    def remove_from_medbox(self, device_id: str, drug_id: int) -> Medbox:
+        """从药箱移除一个药品，返回完整药箱。"""
+        user_repo = self._require_user_repo()
+        user_id = user_repo.get_or_create_user(device_id)
+        user_repo.remove_item(user_id, drug_id)
+        return self.get_medbox(device_id)
 
     def add_item(self, medbox: Medbox, item: MedboxItem) -> Medbox:
         """向药箱加一项：同 drug_id 已存在则替换（幂等）。"""
