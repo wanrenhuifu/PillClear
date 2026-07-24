@@ -8,7 +8,6 @@ import pytest
 from app.knowledge.schemas import Ingredient
 from app.rules.engine import (
     DEFAULT_RULES_DIR,
-    check_conflicts,
     count_matches,
     format_warning,
     load_rules,
@@ -152,7 +151,6 @@ def test_unknown_unit_still_counts_for_min_count():
 def test_empty_ingredients_no_raise():
     ruleset = load_rules(DEFAULT_RULES_DIR)
     assert match_rules(ruleset, []) == []
-    assert check_conflicts(ruleset, [], None) == []
 
 
 def test_confidence_and_source_passthrough():

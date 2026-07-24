@@ -1,7 +1,7 @@
 """意图分类提示词（任务一 / 任务三）。
 
 把用户问题归入四类之一，并抽取药名 / 非药物摄入，供 /chat 选择
-RAG 检索策略与是否触发确定性冲突检测。意图分类是「路由」而非「药学判断」，
+RAG 检索策略与是否触发确定性药箱检查。意图分类是「路由」而非「药学判断」，
 分类失败在路由层降级为 drug_info，不影响主流程（见 app/api/routes.py）。
 """
 
@@ -16,7 +16,7 @@ class IntentCategory(str, Enum):
     """用户问题意图分类。"""
 
     DRUG_INFO = "drug_info"  # 药品说明书查询：成分、用法、副作用等
-    CONFLICT_CHECK = "conflict_check"  # 药物冲突：两种药能不能一起吃
+    DRUG_INTERACTION = "drug_interaction"  # 药-药相互作用：两种药能不能一起吃
     LIFESTYLE_INTERACTION = "lifestyle_interaction"  # 药物与食物/酒精/保健品
     GENERAL_HEALTH = "general_health"  # 一般健康咨询（感冒怎么办等）
 
@@ -41,7 +41,7 @@ _INTENT_SYSTEM_PROMPT = (
     "分类标准：\n"
     "- drug_info：查询具体药品的信息（成分、用法用量、副作用、禁忌等），"
     "或一般性用药常识。\n"
-    "- conflict_check：询问两种或以上药物能否同时服用、有无冲突、"
+    "- drug_interaction：询问两种或以上药物能否同时服用、有无相互作用、"
     "需要间隔多久。\n"
     "- lifestyle_interaction：询问药物与酒精、食物、保健品、"
     "特殊饮食（如葡萄柚）的相互作用。\n"

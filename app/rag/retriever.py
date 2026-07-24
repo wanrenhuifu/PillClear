@@ -13,15 +13,10 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from app.knowledge.embedder import Embedder
-
-if TYPE_CHECKING:
-    # 模块级导入 app.api.schemas 会构成 app.rag ↔ app.api 环
-    # （app/api/__init__ 立即导入 routes → deps → 本模块），故仅类型检查时导入；
-    # 运行期 Citation 在 PgVectorRetriever.search 内延迟导入。
-    from app.api.schemas import Citation
+from app.knowledge.schemas import Citation
 
 logger = logging.getLogger("app.rag")
 
@@ -91,9 +86,6 @@ class PgVectorRetriever:
         self._lock = threading.Lock()
 
     def search(self, query: str, limit: int = 5) -> list[Citation]:
-        # 延迟导入，避免 app.rag ↔ app.api 包环（见模块头注）。
-        from app.api.schemas import Citation  # noqa: PLC0415
-
         # 两段式 try/except：向量化失败不丢弃健康的数据库连接。
         try:
             vector = self._embedder.embed([query])[0]
@@ -112,7 +104,7 @@ class PgVectorRetriever:
             return []
         return [
             Citation(
-                drug_name=brand_name,
+                brand_name=brand_name,
                 section=section,
                 excerpt=content[:_EXCERPT_MAX_LEN],
             )

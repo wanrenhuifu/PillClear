@@ -1,6 +1,6 @@
-"""药箱 API 路由：冲突检测（D4）。
+"""药箱 API 路由：药箱检查（D4）。
 
-铁律 #1：冲突判断全部走确定性规则引擎，本层只做编排与 I/O，永不碰 LLM。
+铁律 #1：叠加 / 相互作用判断全部走确定性规则引擎，本层只做编排与 I/O，永不碰 LLM。
 铁律 #5：本端点只返回结构化数据；大白话话术与免责声明由 /chat 聚合层承担。
 """
 
@@ -11,7 +11,7 @@ from fastapi.concurrency import run_in_threadpool
 
 from app.api.deps import get_medbox_service
 from app.medbox.schemas import (
-    ConflictReport,
+    CheckReport,
     Medbox,
     MedboxCheckRequest,
     MedboxItem,
@@ -23,18 +23,18 @@ from app.medbox.service import MedboxService
 router = APIRouter()
 
 
-@router.post("/medbox/check", response_model=ConflictReport)
+@router.post("/medbox/check", response_model=CheckReport)
 async def check_medbox(
     request: MedboxCheckRequest,
     service: MedboxService = Depends(get_medbox_service),
-) -> ConflictReport:
-    """个人药箱冲突检测：成分叠加 + 规则匹配。
+) -> CheckReport:
+    """个人药箱检查：成分叠加 + 规则匹配。
 
     仓储查询可能阻塞（PostgresDrugRepository 走 psycopg 同步连接），
     与 /chat 同款 run_in_threadpool 放入线程池。
     """
     return await run_in_threadpool(
-        service.check_conflicts,
+        service.check,
         Medbox(items=request.items),
         request.lifestyle_substances,
     )

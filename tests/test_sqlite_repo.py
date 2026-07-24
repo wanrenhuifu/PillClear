@@ -135,7 +135,7 @@ class TestSQLiteVectorRetriever:
             FixedEmbedder(_one_hot(0)), connection=repo.connection
         )
         citations = retriever.search("布洛芬怎么吃")
-        assert [c.drug_name for c in citations] == ["泰诺", "芬必得"]
+        assert [c.brand_name for c in citations] == ["泰诺", "芬必得"]
         assert citations[0].section == "用法用量"
 
     def test_excerpt_is_first_200_chars_and_exact_substring(self):

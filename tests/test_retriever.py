@@ -105,7 +105,7 @@ def test_search_returns_citations():
 
     citations = retriever.search("布洛芬怎么吃")
 
-    assert [c.drug_name for c in citations] == ["泰诺", "芬必得"]
+    assert [c.brand_name for c in citations] == ["泰诺", "芬必得"]
     assert [c.section for c in citations] == ["用法用量", "禁忌"]
     assert citations[0].excerpt == "口服。成人一次1-2片，一日3次。"
     assert embedder.calls == [["布洛芬怎么吃"]]

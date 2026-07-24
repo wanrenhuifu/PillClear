@@ -2,7 +2,6 @@
 
 from app.rules.engine import (
     DEFAULT_RULES_DIR,
-    check_conflicts,
     count_matches,
     format_warning,
     load_rules,
@@ -21,7 +20,6 @@ __all__ = [
     "DEFAULT_RULES_DIR",
     "load_rules",
     "match_rules",
-    "check_conflicts",
     "count_matches",
     "format_warning",
     "IngredientCondition",

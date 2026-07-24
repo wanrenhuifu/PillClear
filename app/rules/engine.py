@@ -1,6 +1,6 @@
 """规则引擎确定性解释器（D4，纯函数）。
 
-铁律 #1：冲突判断全部走 YAML 规则 + 本解释器，禁止 LLM 推断药学结论。
+铁律 #1：相互作用 / 叠加判断全部走 YAML 规则 + 本解释器，禁止 LLM 推断药学结论。
 
 匹配语义（AND）：一条规则命中当且仅当——
 - 每个 IngredientCondition：扁平成分列表中满足「名称相等 + min_amount_mg」
@@ -105,15 +105,6 @@ def match_rules(
     return triggered
 
 
-def check_conflicts(
-    rules: RuleSet,
-    ingredients: list[Ingredient],
-    lifestyle_substances: list[str] | None = None,
-) -> list[Rule]:
-    """对外主入口：match_rules 的语义化别名。"""
-    return match_rules(rules, ingredients, lifestyle_substances)
-
-
 class _KeepUnknownKeys(dict):
     """format_map 的占位符兜底：未知键保留字面 {key}，不抛 KeyError。"""
 
@@ -142,6 +133,5 @@ __all__ = [
     "load_rules",
     "count_matches",
     "match_rules",
-    "check_conflicts",
     "format_warning",
 ]

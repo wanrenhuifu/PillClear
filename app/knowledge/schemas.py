@@ -5,6 +5,18 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class Citation(BaseModel):
+    """一条说明书原文引用（RAG 检索的最小单元）。
+
+    属于 knowledge 层而非 API 层：Citation 是领域概念（说明书的证据片段），
+    RAG 检索器、prompt 构建器、API 响应都使用它，但不该由 API 层定义。
+    """
+
+    brand_name: str = Field(..., description="药品商品名")
+    section: str = Field(..., description="说明书章节名，如「用法用量」")
+    excerpt: str = Field(..., description="原文摘录")
+
+
 class Ingredient(BaseModel):
     """单个成分。amount/unit 在说明书未标含量时为 None。"""
 

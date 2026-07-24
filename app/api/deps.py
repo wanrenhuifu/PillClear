@@ -22,8 +22,7 @@ from app.medbox.repository import (
 )
 from app.medbox.service import MedboxService
 from app.medbox.sqlite_medbox_repo import SQLiteUserMedboxRepository
-from app.rag.retriever import NullRetriever, PgVectorRetriever, Retriever
-from app.rag.sqlite_retriever import SQLiteVectorRetriever
+from app.rag import NullRetriever, PgVectorRetriever, Retriever, SQLiteVectorRetriever
 from app.rules.engine import DEFAULT_RULES_DIR, load_rules
 from app.rules.schemas import RuleSet
 

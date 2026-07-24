@@ -2,10 +2,10 @@
 
 /chat 是一个编排 RAG + 规则引擎 + LLM 的智能体，而非裸 LLM 问答：
     安全边界（关键词 + LLM 补漏）→ 意图分类 → 按意图检索 RAG
-    →（冲突意图）确定性规则引擎检测 → LLM 生成大白话 → 各级兜底 → 免责声明。
+    →（检查意图）确定性规则引擎检测 → LLM 生成大白话 → 各级兜底 → 免责声明。
 
 铁律落实：
-- #1 冲突 / 剂量判断走规则引擎，LLM 只翻译结论；
+- #1 叠加 / 相互作用 / 剂量判断走规则引擎，LLM 只翻译结论；
 - #2 回答强制带说明书引用，代码对「无引用」兜底；
 - #3 能力边界关键词为主、LLM 补漏，结论回落固定话术；
 - #4 低置信度 / 未收录药品明说，不静默；
@@ -25,16 +25,17 @@ from app.api.deps import (
     get_retriever,
     get_settings,
 )
-from app.api.schemas import Citation, ChatRequest, ChatResponse, LLMAnswer
+from app.api.schemas import ChatRequest, ChatResponse, LLMAnswer
+from app.knowledge.schemas import Citation
 from app.config import Settings
 from app.core.safety import check_boundary_with_llm
 from app.llm.client import LLMClient
 from app.llm.errors import LLMRetryExhausted
-from app.medbox.schemas import ConflictReport, Medbox, MedboxItem
+from app.medbox.schemas import CheckReport, Medbox, MedboxItem
 from app.medbox.service import MedboxService
 from app.prompts.chat import (
     build_chat_messages,
-    format_conflict_report_for_prompt,
+    format_check_report_for_prompt,
 )
 from app.prompts.intent import (
     IntentCategory,
@@ -100,7 +101,7 @@ def _merge_citations(retriever: Retriever, terms: list[str]) -> list[Citation]:
         if not term:
             continue
         for c in retriever.search(term):
-            key = (c.drug_name, c.section, c.excerpt)
+            key = (c.brand_name, c.section, c.excerpt)
             if key in seen:
                 continue
             seen.add(key)
@@ -113,11 +114,11 @@ def _retrieve_citations(
 ) -> list[Citation]:
     """按意图选择 RAG 检索策略（任务三）。
 
-    - conflict_check：用提取的 drug_names 逐一检索，合并结果；
+    - drug_interaction：用提取的 drug_names 逐一检索，合并结果；
     - lifestyle_interaction：用 drug_names + lifestyle_substances 检索；
     - drug_info / general_health / 未提取到药名：用原始 query 检索。
     """
-    if intent.intent is IntentCategory.CONFLICT_CHECK and intent.drug_names:
+    if intent.intent is IntentCategory.DRUG_INTERACTION and intent.drug_names:
         return _merge_citations(retriever, intent.drug_names)
     if intent.intent is IntentCategory.LIFESTYLE_INTERACTION:
         terms = [*intent.drug_names, *intent.lifestyle_substances]
@@ -126,12 +127,12 @@ def _retrieve_citations(
     return retriever.search(query)
 
 
-def _run_conflict_check(
+def _run_check(
     service: MedboxService, intent: IntentResult
-) -> ConflictReport:
+) -> CheckReport:
     """用意图提取的药名跑确定性规则引擎（任务四，零 LLM，铁律 #1）。
 
-    /chat 场景只有药名、没有 drug_id，而 check_conflicts 按 brand_name 解析成分、
+    /chat 场景只有药名、没有 drug_id，而 MedboxService.check 按 brand_name 解析成分、
     drug_id 仅作内部 map 键——故以枚举序号占位 drug_id，未入库药品由服务层
     落入 unresolved_drugs 明示（铁律 #4）。
     """
@@ -140,7 +141,7 @@ def _run_conflict_check(
         for idx, name in enumerate(intent.drug_names)
         if name.strip()
     ]
-    return service.check_conflicts(
+    return service.check(
         Medbox(items=items), intent.lifestyle_substances or None
     )
 
@@ -164,7 +165,7 @@ async def chat(
     """用药咨询主入口（编排 RAG + 规则引擎 + LLM）。
 
     流程：安全边界（关键词 + LLM 补漏）→ 意图分类 → 按意图检索 RAG
-    →（冲突意图）规则引擎检测 → LLM 生成 → 低置信度 / 无引用兜底 → 免责声明。
+    →（检查意图）规则引擎检测 → LLM 生成 → 低置信度 / 无引用兜底 → 免责声明。
     """
 
     # 1. 安全边界（铁律 #3：关键词为主、LLM 补漏，结论回落固定话术）
@@ -187,16 +188,16 @@ async def chat(
         _retrieve_citations, retriever, request.query, intent
     )
 
-    # 4. 冲突意图 → 确定性规则引擎检测（任务四，铁律 #1：零 LLM）
-    conflict_context: str | None = None
-    has_conflict_findings = False
+    # 4. 检查意图（药-药 / 药-物质相互作用）→ 确定性规则引擎检测（任务四，铁律 #1：零 LLM）
+    check_context: str | None = None
+    has_findings = False
     if intent.intent in (
-        IntentCategory.CONFLICT_CHECK,
+        IntentCategory.DRUG_INTERACTION,
         IntentCategory.LIFESTYLE_INTERACTION,
     ):
-        report = await run_in_threadpool(_run_conflict_check, medbox_service, intent)
-        conflict_context = format_conflict_report_for_prompt(report)
-        has_conflict_findings = bool(
+        report = await run_in_threadpool(_run_check, medbox_service, intent)
+        check_context = format_check_report_for_prompt(report)
+        has_findings = bool(
             report.triggered_rules
             or report.overlap.warnings
             or report.unresolved_drugs
@@ -204,7 +205,7 @@ async def chat(
 
     # 5. 构造含 RAG + 冲突结论的 messages 并调用 LLM
     messages = build_chat_messages(
-        request.query, citations, conflict_context=conflict_context
+        request.query, citations, check_context=check_context
     )
 
     try:
@@ -223,9 +224,9 @@ async def chat(
         full_answer += _LOW_CONFIDENCE_NOTE
 
     # 7. 引用缺失兜底（铁律 #2 代码防线）。
-    #    若规则引擎已给出确定性冲突结论，则结论来源是规则引擎而非说明书检索，
-    #    不再追加「查阅说明书」提示，避免与冲突结论互相打架。
-    if not llm_answer.citations_used and not has_conflict_findings:
+    #    若规则引擎已给出确定性检查结论，则结论来源是规则引擎而非说明书检索，
+    #    不再追加「查阅说明书」提示，避免与检查结论互相打架。
+    if not llm_answer.citations_used and not has_findings:
         full_answer += _NO_CITATION_NOTE
 
     # 8. 代码追加固定免责声明（铁律 #5）

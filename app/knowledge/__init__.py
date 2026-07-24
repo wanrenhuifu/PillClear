@@ -9,6 +9,7 @@ from app.knowledge.repository import (
     PostgresDrugRepository,
 )
 from app.knowledge.schemas import (
+    Citation,
     DrugMetadata,
     DrugRecord,
     Ingredient,
@@ -17,6 +18,7 @@ from app.knowledge.schemas import (
 )
 
 __all__ = [
+    "Citation",
     "Embedder",
     "ingest_text",
     "ingest_directory",

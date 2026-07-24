@@ -6,19 +6,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.knowledge.schemas import Citation
+
 
 class ChatRequest(BaseModel):
     """用户发来的用药咨询。"""
 
     query: str = Field(..., min_length=1, max_length=2000, description="用户问题")
-
-
-class Citation(BaseModel):
-    """一条说明书原文引用（D3 RAG 检索后填充）。"""
-
-    drug_name: str = Field(..., description="药品商品名")
-    section: str = Field(..., description="说明书章节名，如「用法用量」")
-    excerpt: str = Field(..., description="原文摘录")
 
 
 class ChatResponse(BaseModel):

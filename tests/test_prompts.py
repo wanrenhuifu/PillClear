@@ -3,15 +3,15 @@
 提示词是 /chat 智能体的「剧本」，必须可测：
 - build_chat_messages / build_intent_messages / build_safety_messages 的结构；
 - RAG 上下文按药品分组注入、无引用时的降级提示；
-- 冲突检测结论槽位的注入（任务四）与 ConflictReport 格式化；
+- 检查结论槽位的注入（任务四）与 CheckReport 格式化；
 - 意图 / 安全分类的枚举与输出模型。
 """
 
 import pytest
 from pydantic import ValidationError
 
-from app.api.schemas import Citation
-from app.medbox.schemas import ConflictReport, IngredientTotal, OverlapResult
+from app.knowledge.schemas import Citation
+from app.medbox.schemas import CheckReport, IngredientTotal, OverlapResult
 from app.prompts.chat import (
     IntentCategory,
     IntentResult,
@@ -19,7 +19,7 @@ from app.prompts.chat import (
     build_intent_messages,
     build_system_prompt,
     format_citations_for_prompt,
-    format_conflict_report_for_prompt,
+    format_check_report_for_prompt,
 )
 from app.prompts.safety import SafetyLLMResult, build_safety_messages
 from app.rules.schemas import IngredientCondition, Rule, RuleConditions
@@ -29,9 +29,9 @@ from app.rules.schemas import IngredientCondition, Rule, RuleConditions
 
 def _citations() -> list[Citation]:
     return [
-        Citation(drug_name="布洛芬", section="用法用量", excerpt="成人一次1粒，一日2次。"),
-        Citation(drug_name="布洛芬", section="不良反应", excerpt="可见恶心、胃烧灼感。"),
-        Citation(drug_name="泰诺", section="成份", excerpt="每片含对乙酰氨基酚325毫克。"),
+        Citation(brand_name="布洛芬", section="用法用量", excerpt="成人一次1粒，一日2次。"),
+        Citation(brand_name="布洛芬", section="不良反应", excerpt="可见恶心、胃烧灼感。"),
+        Citation(brand_name="泰诺", section="成份", excerpt="每片含对乙酰氨基酚325毫克。"),
     ]
 
 
@@ -75,20 +75,20 @@ class TestBuildChatMessages:
         system = build_system_prompt(None)
         assert "未检索到" in system
 
-    def test_conflict_context_slot_injected(self):
+    def test_check_context_slot_injected(self):
         msgs = build_chat_messages(
             "泰诺和必理通能一起吃吗",
-            conflict_context="规则引擎检测到对乙酰氨基酚重复过量。",
+            check_context="规则引擎检测到对乙酰氨基酚重复过量。",
         )
         system = msgs[0]["content"]
-        assert "冲突检测结果" in system
+        assert "检查结果" in system
         assert "对乙酰氨基酚重复过量" in system
         # 铁律 #1：明确要求 LLM 只翻译、不改写确定性结论
         assert "改写" in system
 
-    def test_no_conflict_slot_when_none(self):
-        system = build_system_prompt(_citations(), conflict_context=None)
-        assert "冲突检测结果" not in system
+    def test_no_check_slot_when_none(self):
+        system = build_system_prompt(_citations(), check_context=None)
+        assert "检查结果" not in system
 
     def test_chat_history_inserted_between_system_and_user(self):
         history = [{"role": "assistant", "content": "你好"}]
@@ -126,12 +126,12 @@ class TestIntent:
 
     def test_intent_prompt_lists_four_categories(self):
         system = build_intent_messages("x")[0]["content"]
-        for cat in ("drug_info", "conflict_check", "lifestyle_interaction", "general_health"):
+        for cat in ("drug_info", "drug_interaction", "lifestyle_interaction", "general_health"):
             assert cat in system
 
     def test_intent_category_enum_values(self):
         assert IntentCategory.DRUG_INFO.value == "drug_info"
-        assert IntentCategory.CONFLICT_CHECK.value == "conflict_check"
+        assert IntentCategory.DRUG_INTERACTION.value == "drug_interaction"
         assert IntentCategory.LIFESTYLE_INTERACTION.value == "lifestyle_interaction"
         assert IntentCategory.GENERAL_HEALTH.value == "general_health"
 
@@ -146,35 +146,35 @@ class TestIntent:
             IntentResult(intent="not_a_real_intent")
 
 
-# ── 冲突报告格式化（任务四）──────────────────────────────────
+# ── 检查报告格式化（任务四）──────────────────────────────────
 
-class TestFormatConflictReport:
+class TestFormatCheckReport:
 
     def test_unresolved_drugs_made_explicit(self):
-        report = ConflictReport(
+        report = CheckReport(
             overlap=OverlapResult(), unresolved_drugs=["某神秘药"]
         )
-        text = format_conflict_report_for_prompt(report)
+        text = format_check_report_for_prompt(report)
         assert "暂未收录" in text
         assert "某神秘药" in text
 
     def test_triggered_rule_inlined(self):
-        report = ConflictReport(
+        report = CheckReport(
             overlap=OverlapResult(), triggered_rules=[_overlap_rule()]
         )
-        text = format_conflict_report_for_prompt(report)
+        text = format_check_report_for_prompt(report)
         assert "对乙酰氨基酚重复过量" in text
         assert "825.0mg" in text
 
     def test_overlap_warning_inlined(self):
-        report = ConflictReport(
+        report = CheckReport(
             overlap=OverlapResult(warnings=["⚠️ 对乙酰氨基酚每日合计超限。"])
         )
-        text = format_conflict_report_for_prompt(report)
+        text = format_check_report_for_prompt(report)
         assert "对乙酰氨基酚每日合计超限" in text
 
     def test_shared_ingredient_sources_listed(self):
-        report = ConflictReport(
+        report = CheckReport(
             overlap=OverlapResult(
                 overlapping=[
                     IngredientTotal(
@@ -186,12 +186,12 @@ class TestFormatConflictReport:
                 ]
             )
         )
-        text = format_conflict_report_for_prompt(report)
+        text = format_check_report_for_prompt(report)
         assert "泰诺、必理通" in text
 
-    def test_empty_report_says_no_conflict(self):
-        report = ConflictReport(overlap=OverlapResult())
-        text = format_conflict_report_for_prompt(report)
+    def test_empty_report_says_no_findings(self):
+        report = CheckReport(overlap=OverlapResult())
+        text = format_check_report_for_prompt(report)
         assert "未检测到" in text
 
 

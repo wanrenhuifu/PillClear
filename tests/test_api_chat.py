@@ -125,7 +125,7 @@ def _seed_repo() -> InMemoryDrugRepository:
 
 @pytest.fixture
 def client_seeded(app_with_test_settings) -> TestClient:
-    """/chat 客户端 + 种子药箱仓储（冲突检测集成测试用）。"""
+    """/chat 客户端 + 种子药箱仓储（药箱检查集成测试用）。"""
     app_with_test_settings.dependency_overrides[get_drug_repository] = _seed_repo
     return TestClient(app_with_test_settings)
 
@@ -257,7 +257,7 @@ class TestChatOk:
         assert "不能替代" in data["disclaimer"]
 
     def test_citations_empty_adds_no_citation_note(self, respx_mock, client):
-        """无 RAG 引用、无冲突结论、LLM 也没自报引用 → 代码追加查阅说明书提示。"""
+        """无 RAG 引用、无检查结论、LLM 也没自报引用 → 代码追加查阅说明书提示。"""
         respx_mock.post(DEEPSEEK_URL).mock(
             side_effect=[
                 safety_completion(),
@@ -339,13 +339,13 @@ class TestIntentClassification:
         assert resp.status_code == 200
         assert resp.json()["blocked"] is False
 
-    def test_conflict_intent_retrieves_each_drug(self, respx_mock, client_seeded):
-        """conflict_check 意图：对每个药名分别检索（NullRetriever 下为空，不报错）。"""
+    def test_drug_interaction_intent_retrieves_each_drug(self, respx_mock, client_seeded):
+        """drug_interaction 意图：对每个药名分别检索（NullRetriever 下为空，不报错）。"""
         respx_mock.post(DEEPSEEK_URL).mock(
             side_effect=[
                 safety_completion(),
                 intent_completion(
-                    "conflict_check", drug_names=["泰诺", "必理通"]
+                    "drug_interaction", drug_names=["泰诺", "必理通"]
                 ),
                 answer_completion("两种药都含对乙酰氨基酚，别一起吃。", 0.9),
             ]
@@ -357,9 +357,9 @@ class TestIntentClassification:
         assert resp.json()["blocked"] is False
 
 
-# ── 冲突检测集成（任务四）────────────────────────────────────
+# ── 药箱检查集成（任务四）────────────────────────────────────
 
-class TestConflictIntegration:
+class TestCheckIntegration:
 
     def test_overlap_rule_conclusion_injected_into_prompt(
         self, respx_mock, client_seeded
@@ -369,7 +369,7 @@ class TestConflictIntegration:
             side_effect=[
                 safety_completion(),
                 intent_completion(
-                    "conflict_check", drug_names=["泰诺", "必理通"]
+                    "drug_interaction", drug_names=["泰诺", "必理通"]
                 ),
                 answer_completion(
                     "泰诺和必理通都含对乙酰氨基酚，一起吃容易超量伤肝，建议只留一种。",
@@ -390,13 +390,13 @@ class TestConflictIntegration:
         # prompt 明确要求 LLM 只翻译、不改写结论（铁律 #1）
         assert "不能" in prompt and "改写" in prompt
 
-    def test_no_conflict_reported_clean(self, respx_mock, client_seeded):
-        """泰诺 + 芬必得 无共享成分 → prompt 明示未检测到冲突。"""
+    def test_no_findings_reported_clean(self, respx_mock, client_seeded):
+        """泰诺 + 芬必得 无共享成分 → prompt 明示未检测到风险。"""
         respx_mock.post(DEEPSEEK_URL).mock(
             side_effect=[
                 safety_completion(),
                 intent_completion(
-                    "conflict_check", drug_names=["泰诺", "芬必得"]
+                    "drug_interaction", drug_names=["泰诺", "芬必得"]
                 ),
                 answer_completion("这两种药成分不同，按说明书用量一般可同用。", 0.8),
             ]
@@ -416,7 +416,7 @@ class TestConflictIntegration:
             side_effect=[
                 safety_completion(),
                 intent_completion(
-                    "conflict_check", drug_names=["泰诺", "某神秘药"]
+                    "drug_interaction", drug_names=["泰诺", "某神秘药"]
                 ),
                 answer_completion("泰诺可查，某神秘药暂未收录。", 0.7),
             ]
@@ -429,17 +429,17 @@ class TestConflictIntegration:
         assert "暂未收录" in prompt
         assert "某神秘药" in prompt
 
-    def test_conflict_findings_suppress_no_citation_note(
+    def test_findings_suppress_no_citation_note(
         self, respx_mock, client_seeded
     ):
-        """有规则引擎冲突结论时，即使 LLM 没自报引用，也不追加「查阅说明书」提示。"""
+        """有规则引擎检查结论时，即使 LLM 没自报引用，也不追加「查阅说明书」提示。"""
         respx_mock.post(DEEPSEEK_URL).mock(
             side_effect=[
                 safety_completion(),
                 intent_completion(
-                    "conflict_check", drug_names=["泰诺", "必理通"]
+                    "drug_interaction", drug_names=["泰诺", "必理通"]
                 ),
-                # citations_used 为空，但有冲突结论
+                # citations_used 为空，但有检查结论
                 answer_completion("别一起吃，对乙酰氨基酚会超量。", 0.9, []),
             ]
         )

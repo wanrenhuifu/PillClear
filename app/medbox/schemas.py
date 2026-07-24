@@ -1,10 +1,10 @@
 """个人药箱数据模型（D4）。
 
 药箱支持两种用法：
-- 无状态冲突检测：客户端随请求上送 items（POST /medbox/check）。
-- 服务端持久化：用户「我的常用药」存于 user_medbox 表，MVP 阶段用
-  device_id 标识用户、不做登录（见 app/medbox/repository.py）。
-服务端按 brand_name 从 drugs 表读成分做冲突检测。
+- 无状态药箱检查：客户端随请求上送 items（POST /medbox/check）。
+- 服务端持久化：用户「正在服用 / 可能同期服用的药」存于 user_medbox 表，
+  MVP 阶段用 device_id 标识用户、不做登录（见 app/medbox/repository.py）。
+服务端按 brand_name 从 drugs 表读成分做药箱检查（叠加 + 相互作用）。
 """
 
 from __future__ import annotations
@@ -46,8 +46,8 @@ class OverlapResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)  # 超安全上限的警告
 
 
-class ConflictReport(BaseModel):
-    """完整的药箱冲突检查报告。"""
+class CheckReport(BaseModel):
+    """完整的药箱检查报告：叠加 + 被触发的相互作用规则 + 未入库药品。"""
 
     overlap: OverlapResult
     triggered_rules: list[Rule] = Field(default_factory=list)
@@ -82,7 +82,7 @@ __all__ = [
     "Medbox",
     "IngredientTotal",
     "OverlapResult",
-    "ConflictReport",
+    "CheckReport",
     "MedboxCheckRequest",
     "MedboxItemAddRequest",
     "MedboxResponse",

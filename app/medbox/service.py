@@ -1,4 +1,4 @@
-"""药箱服务层：CRUD + 冲突检查编排（D4，不依赖 Web 框架）。
+"""药箱服务层：CRUD + 药箱检查编排（D4，不依赖 Web 框架）。
 
 编排两个确定性部件：app/medbox/calculator.py 的成分叠加纯函数
 与 app/rules/engine.py 的规则解释器。本层不做任何药学判断（铁律 #1）。
@@ -10,13 +10,13 @@ from app.knowledge.repository import DrugRepository
 from app.knowledge.schemas import Ingredient
 from app.medbox.calculator import calculate_ingredient_totals, check_overlap
 from app.medbox.repository import UserMedboxRepository
-from app.medbox.schemas import ConflictReport, Medbox, MedboxItem
-from app.rules.engine import check_conflicts, count_matches, format_warning
+from app.medbox.schemas import CheckReport, Medbox, MedboxItem
+from app.rules.engine import count_matches, format_warning, match_rules
 from app.rules.schemas import Rule, RuleSet
 
 
 class MedboxService:
-    """药箱业务逻辑：CRUD + 冲突检查编排。"""
+    """药箱业务逻辑：CRUD + 药箱检查编排。"""
 
     def __init__(
         self,
@@ -73,12 +73,12 @@ class MedboxService:
         """按 drug_id 移除（不存在则为原样副本，幂等）。"""
         return Medbox(items=[i for i in medbox.items if i.drug_id != drug_id])
 
-    def check_conflicts(
+    def check(
         self,
         medbox: Medbox,
         lifestyle_substances: list[str] | None = None,
-    ) -> ConflictReport:
-        """编排：成分叠加计算 + 规则匹配 → ConflictReport。"""
+    ) -> CheckReport:
+        """编排：成分叠加计算 + 规则匹配 → CheckReport。"""
         # 1. 按 brand_name 解析成分；未入库药品明示为 unresolved（铁律 #4）。
         drugs_map: dict[int, list[Ingredient]] = {}
         resolved_items: list[MedboxItem] = []
@@ -111,10 +111,10 @@ class MedboxService:
                 flat.append(ing)
         triggered = [
             self._render(rule, flat, totals_by_name)
-            for rule in check_conflicts(self._rules, flat, lifestyle_substances)
+            for rule in match_rules(self._rules, flat, lifestyle_substances)
         ]
 
-        return ConflictReport(
+        return CheckReport(
             overlap=overlap,
             triggered_rules=triggered,
             unresolved_drugs=unresolved,

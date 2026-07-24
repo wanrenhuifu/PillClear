@@ -161,8 +161,8 @@ class TestMedboxServicePersistence:
         service.add_to_medbox("A", MedboxItem(drug_id=1, brand_name="泰诺"))
         assert service.get_medbox("B").items == []
 
-    def test_persisted_medbox_feeds_conflict_check(self):
-        """持久化药箱可直接喂给 check_conflicts（D4 链路复用）。"""
+    def test_persisted_medbox_feeds_check(self):
+        """持久化药箱可直接喂给 MedboxService.check（D4 链路复用）。"""
         drugs = _seed_drug_repo()
         user_repo = InMemoryUserMedboxRepository(brands=_brands())
         from app.rules.engine import load_rules, DEFAULT_RULES_DIR
@@ -170,7 +170,7 @@ class TestMedboxServicePersistence:
         service = MedboxService(load_rules(DEFAULT_RULES_DIR), drugs, user_repo=user_repo)
         service.add_to_medbox("dev", MedboxItem(drug_id=1, brand_name="泰诺", dosage_per_day=3))
         service.add_to_medbox("dev", MedboxItem(drug_id=2, brand_name="必理通", dosage_per_day=2))
-        report = service.check_conflicts(service.get_medbox("dev"))
+        report = service.check(service.get_medbox("dev"))
         assert [t.name for t in report.overlap.overlapping] == ["对乙酰氨基酚"]
 
 

@@ -2,7 +2,7 @@
 
 from app.medbox.calculator import calculate_ingredient_totals, check_overlap
 from app.medbox.schemas import (
-    ConflictReport,
+    CheckReport,
     IngredientTotal,
     Medbox,
     MedboxCheckRequest,
@@ -18,7 +18,7 @@ __all__ = [
     "Medbox",
     "IngredientTotal",
     "OverlapResult",
-    "ConflictReport",
+    "CheckReport",
     "MedboxCheckRequest",
     "MedboxService",
 ]
