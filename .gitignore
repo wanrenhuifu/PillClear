@@ -18,6 +18,9 @@ venv/
 # Claude Code 本地配置（不入仓库）
 .claude/settings.local.json
 
+# 本地草稿 / 工作区（不入仓库）
+.scratch/
+
 # 第三方技能库（由 skills-lock.json 记录来源，用 npx skills@latest 恢复）
 .agents/skills/
 .claude/skills/
