@@ -34,6 +34,8 @@ uvicorn app.main:app --reload
 - **LLM 默认 DeepSeek**（`llm_provider=deepseek`，默认模型 `deepseek-v4-pro`，走 `app/llm/providers.py` 预置）。多厂牌支持：openai / qwen / glm / moonshot / ollama。`Settings` 硬拒绝已废弃模型名 `deepseek-chat` / `deepseek-reasoner`（`config.py:DEPRECATED_MODELS`）
 - **测试全程 mock**，HTTP/LLM 调用一律 mock（respx），不打真实网络。测试用 `:memory:` SQLite，不落盘；`conftest.py` 以 `_env_file=None` 构造 Settings，套件与开发机 `.env` 无关。
 - **「叠加」有两条独立机制，别混淆**：① `app/medbox/calculator.py` 纯函数按成分求和、对照硬编码 `_DAILY_LIMITS`（对乙酰氨基酚 4000mg 等）算日总摄入量；② `app/rules/data/overlap.yaml` 的规则引擎告警。规则 YAML 共三份：`overlap`（重复成分）/ `interaction`（药-药）/ `alcohol`（药-物质），warning 文案里的 `{count}`/`{total_mg}` 由 `engine.format_warning` 运行期填充（纯代码，无 LLM）。
+- **prompt 模板有 golden 逐字比对**（`tests/test_prompts_golden.py` + `tests/golden/`）：任何文案漂移立刻变红；**有意**改文案时用 `PILLCLEAR_REGEN_GOLDEN=1 python -m pytest tests/test_prompts_golden.py` 重新生成，并在 commit 说明改动
+- **`app/core/safety.py` 有特征化边界用例**（`tests/test_safety.py` 的 `*NearMiss` / `TestFixedMessagesGolden` 组）：锁定当前保守匹配语义与已知盲区（见 `docs/refactor-readiness.md`）；变红 = 行为变更，须显式决策，禁止悄悄改测试
 
 ## 环境变量（只需一个）
 

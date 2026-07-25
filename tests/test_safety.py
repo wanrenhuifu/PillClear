@@ -321,3 +321,140 @@ class TestCheckWithLLMIntegration:
         r = check("布洛芬能空腹吃吗", llm)
         assert r.blocked is False
         assert r.category is BoundaryCategory.NONE
+
+
+# ── 特征化测试（重构防护）────────────────────────────────────
+# 目的：把「当前行为」逐案锁死——不论当前行为是否完美。
+# 重构后任何一条变红，都意味着行为发生了改变，必须显式决策
+# （有意识地改测试接受新行为，或修回旧行为），不得静默通过。
+
+
+class TestEmergencyNearMiss:
+    """急症类「差一点不命中」的边界：锁定发热组合正则的窗口宽度与否定语义。"""
+
+    def test_plain_fever_not_emergency(self):
+        # 单纯发烧（无「不退」组合）不触发急症——普通 OTC 退烧咨询必须放行
+        r = check("我发烧了，能吃布洛芬吗")
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+    def test_fever_without_persistence_not_emergency(self):
+        r = check("高烧了怎么办")
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+    def test_fever_gap_beyond_window_not_emergency(self):
+        # 特征化已知盲区：「发热」与「不退」间隔 11 字 > 正则窗口 {0,10}，当前放行。
+        # 重构若要收紧窗口，此测试会变红——那是一次明确的行为变更，需单独决策。
+        r = check("发热已经持续整整三天了还是不退")
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+    def test_negation_only_checked_before_keyword(self):
+        # 否定检测只看关键词「之前」：「没有」在「发热」之后不构成否定，仍触发。
+        # 锁定当前保守语义（铁律 #3：漏判比误判危险）。
+        r = check("发热没有不退的情况")
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.EMERGENCY
+
+
+class TestSpecialPopulationNearMiss:
+    """特殊人群类的边界：子串匹配的保守性与已知未覆盖人群。"""
+
+    def test_future_breastfeeding_still_blocked(self):
+        # 特征化：关键词层做子串匹配，「下周要哺乳期」仍命中「哺乳期」——
+        # 故意保守（拦截只是引导咨询医生），语义细化是 LLM 补漏层的事。
+        r = check("下周要哺乳期了再说")
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.SPECIAL_POPULATION
+
+    def test_menstrual_period_not_special_population(self):
+        # 特征化已知盲区：「月经期」不在关键词表，当前放行。
+        r = check("月经期能吃布洛芬吗")
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+    def test_elderly_not_caught_by_keywords(self):
+        # 特征化已知盲区：「老人/老年人」不在关键词表，年龄正则只覆盖 0-17 岁，
+        # 关键词层放行；设计上由 LLM 补漏层兜底（safety prompt 里列了老人）。
+        r = check("70岁老人吃这个药要注意什么")
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+
+class TestDiagnosisNearMiss:
+    """诊断类的边界：子串匹配的保守命中与纯药品问题放行。"""
+
+    def test_what_disease_treats_still_diagnosis(self):
+        # 特征化：「治什么病的」含子串「什么病」→ 命中诊断（保守误拦，锁定现状）。
+        r = check("这个药是治什么病的")
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.DIAGNOSIS
+
+    def test_side_effect_question_passes(self):
+        r = check("我想知道这个药的副作用")
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+
+class TestPrescriptionNearMiss:
+    """处方药类的边界。"""
+
+    def test_asking_if_antibiotic_blocked(self):
+        # 特征化：询问「是不是抗生素」也命中处方药关键词（保守，锁定现状）。
+        r = check("这个药是抗生素吗")
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.PRESCRIPTION
+
+    def test_vitamin_c_passes(self):
+        r = check("维生素C一天吃多少")
+        assert r.blocked is False
+        assert r.category is BoundaryCategory.NONE
+
+
+class TestPriorityCharacterization:
+    """分类优先级链的完整锁定：急症 > 特殊人群 > 诊断 > 处方药。"""
+
+    def test_diagnosis_over_prescription(self):
+        # 同时命中诊断与处方药关键词时，诊断优先
+        r = check("我是不是得了什么病得吃抗生素")
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.DIAGNOSIS
+
+    def test_special_population_over_diagnosis(self):
+        r = check("孕妇是不是得了什么病")
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.SPECIAL_POPULATION
+
+
+class TestFixedMessagesGolden:
+    """四类固定话术逐字锁定：用户看到的安全文案，重构不得意外改字。"""
+
+    def test_emergency_message_exact(self):
+        r = check("我突然呼吸困难")
+        assert r.message == (
+            "⚠️ 这可能是急症信号，别耽误！请立即拨打 120 或尽快前往最近的急诊。\n"
+            "我只是用药安全助手，处理不了紧急情况，你的安全最重要。"
+        )
+
+    def test_special_population_message_exact(self):
+        r = check("孕妇能吃这个药吗")
+        assert r.message == (
+            "⚠️ 孕妇、哺乳期、儿童以及有慢性病的人群用药风险特殊，"
+            "我没法给出个性化建议。\n"
+            "请当面咨询医生或药师，让专业人士结合具体情况判断，别自己拿主意。"
+        )
+
+    def test_diagnosis_message_exact(self):
+        r = check("帮我诊断一下")
+        assert r.message == (
+            "⚠️ 我不能帮你诊断疾病，也不能解读症状或检查报告——这得靠医生。\n"
+            "如果不舒服，建议尽快去医院或线上问诊，把判断交给专业人士。"
+        )
+
+    def test_prescription_message_exact(self):
+        r = check("头孢一次吃多少")
+        assert r.message == (
+            "⚠️ 处方药必须凭医生处方使用，我不提供处方药的用法用量建议。\n"
+            "请遵医嘱，或到医院、药店当面咨询医生和药师。"
+        )
