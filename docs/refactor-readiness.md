@@ -28,6 +28,8 @@
 
 ## 周期 1：prompts 拆分
 
+> **✅ 已完成（2026-07-26，`fffa2cd..8e690a9`）**：320 passed（不增不减）；14 个 golden 全程绿、从未重新生成；包级 API 不变（`format_*` 规范位置 `app.prompts.formatters`，兼容层按批准删除）；`app.prompts` 覆盖率 100%。设计见 `docs/superpowers/specs/2026-07-26-chat-prompt-split-design.md`。
+
 - [ ] pytest 通过数 ≥ 320
 - [ ] golden 测试全绿（模板内容逐字不变；变红 = 文案变更，须审核后重新生成并在 commit 说明）
 - [ ] 手动抽查：`build_system_prompt` 重构前后对同一输入输出 diff 为空（golden 已代劳，此项双保险）
