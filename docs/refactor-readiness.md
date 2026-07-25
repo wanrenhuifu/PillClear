@@ -31,7 +31,7 @@
 - [ ] pytest 通过数 ≥ 320
 - [ ] golden 测试全绿（模板内容逐字不变；变红 = 文案变更，须审核后重新生成并在 commit 说明）
 - [ ] 手动抽查：`build_system_prompt` 重构前后对同一输入输出 diff 为空（golden 已代劳，此项双保险）
-- [ ] 无新增/删除的公开接口：`build_chat_messages` / `build_system_prompt` / `format_citations_for_prompt` / `format_check_report_for_prompt` / `build_intent_messages` / `build_safety_messages` / `SAFETY_CLASSIFY_SYSTEM_PROMPT` / `INGREDIENT_SYSTEM_PROMPT` 导出不变；`app.prompts.chat` 对 `IntentCategory` / `IntentResult` / `build_intent_messages` 的再导出是**显式兼容层**（chat.py 头部有注释），若删必须先搜调用方
+- [ ] 包级 API（`app/prompts/__init__.py`）不变：`build_chat_messages` / `build_system_prompt` / `format_citations_for_prompt` / `format_check_report_for_prompt` / `build_intent_messages` / `build_safety_messages` / `SAFETY_CLASSIFY_SYSTEM_PROMPT` / `INGREDIENT_SYSTEM_PROMPT`（`format_*` 规范位置迁至 `app.prompts.formatters`，调用方从规范位置导入）；`SYSTEM_PROMPT_TEMPLATE` 与 `app.prompts.chat` 的 intent 三符号再导出经批准随本次重构删除（零消费者，见 `docs/superpowers/specs/2026-07-26-chat-prompt-split-design.md`）
 - [ ] `app.prompts` 覆盖率保持 100%
 
 ## 周期 2：safety.py 重构
