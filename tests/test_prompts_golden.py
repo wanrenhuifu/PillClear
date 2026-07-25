@@ -17,8 +17,8 @@ from pathlib import Path
 
 from app.knowledge.schemas import Citation
 from app.medbox.schemas import CheckReport, IngredientTotal, OverlapResult
-from app.prompts.chat import (
-    build_system_prompt,
+from app.prompts.chat import build_system_prompt
+from app.prompts.formatters import (
     format_check_report_for_prompt,
     format_citations_for_prompt,
 )

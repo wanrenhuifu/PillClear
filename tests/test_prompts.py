@@ -18,6 +18,8 @@ from app.prompts.chat import (
     build_chat_messages,
     build_intent_messages,
     build_system_prompt,
+)
+from app.prompts.formatters import (
     format_citations_for_prompt,
     format_check_report_for_prompt,
 )

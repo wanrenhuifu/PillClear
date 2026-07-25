@@ -26,10 +26,8 @@ from app.llm.client import LLMClient
 from app.llm.errors import LLMRetryExhausted
 from app.medbox.schemas import Medbox, MedboxItem
 from app.medbox.service import check_medbox
-from app.prompts.chat import (
-    build_chat_messages,
-    format_check_report_for_prompt,
-)
+from app.prompts.chat import build_chat_messages
+from app.prompts.formatters import format_check_report_for_prompt
 from app.prompts.intent import (
     IntentCategory,
     IntentResult,
