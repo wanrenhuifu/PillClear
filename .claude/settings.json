@@ -18,7 +18,6 @@
     "skillOverrides":  {
                            "pillclear-safety-review":  "user-invocable-only",
                            "pillclear-insert-ingestion":  "user-invocable-only",
-                           "pillclear-rule-engine":  "user-invocable-only",
-                           "migrate-to-shoehorn":  "off"
+                           "pillclear-rule-engine":  "user-invocable-only"
                        }
 }

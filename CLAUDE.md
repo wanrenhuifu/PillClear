@@ -29,10 +29,11 @@ uvicorn app.main:app --reload
 ## 技术要点
 
 - **Python 3.12 + FastAPI + Pydantic v2**，配置一律走 `app/config.py:Settings`（pydantic-settings），禁止硬编码
-- **默认后端 SQLite**（`%APPDATA%/PillClear/pillclear.db`，WAL 模式），无需 Superbase。设 `DATABASE_URL` 则切到 Postgres + pgvector
+- **默认后端 SQLite**（`%APPDATA%/PillClear/pillclear.db`，WAL 模式），无需 Supabase。设 `DATABASE_URL` 自动切 Postgres + pgvector；`PILLCLEAR_BACKEND`（`""`=自动 / `supabase` / `sqlite`）可显式锁定后端，拼写错误会被 `Settings` 校验直接拒绝
 - **检索走关键词精确匹配**（`app/rag/keyword_retriever.py`），不依赖 embedding。药名精确匹配 → 模糊匹配 → 内容搜索，三级降级。embedding 仅 Postgres 路径保留
-- **LLM 默认 DeepSeek**（`llm_provider=deepseek`，走 `app/llm/providers.py` 预置）。多厂牌支持：openai / qwen / glm / moonshot / ollama
-- **测试全程 mock**，HTTP/LLM 调用一律 mock，不打真实网络。测试用 `:memory:` SQLite，不落盘。
+- **LLM 默认 DeepSeek**（`llm_provider=deepseek`，默认模型 `deepseek-v4-pro`，走 `app/llm/providers.py` 预置）。多厂牌支持：openai / qwen / glm / moonshot / ollama。`Settings` 硬拒绝已废弃模型名 `deepseek-chat` / `deepseek-reasoner`（`config.py:DEPRECATED_MODELS`）
+- **测试全程 mock**，HTTP/LLM 调用一律 mock（respx），不打真实网络。测试用 `:memory:` SQLite，不落盘；`conftest.py` 以 `_env_file=None` 构造 Settings，套件与开发机 `.env` 无关。
+- **「叠加」有两条独立机制，别混淆**：① `app/medbox/calculator.py` 纯函数按成分求和、对照硬编码 `_DAILY_LIMITS`（对乙酰氨基酚 4000mg 等）算日总摄入量；② `app/rules/data/overlap.yaml` 的规则引擎告警。规则 YAML 共三份：`overlap`（重复成分）/ `interaction`（药-药）/ `alcohol`（药-物质），warning 文案里的 `{count}`/`{total_mg}` 由 `engine.format_warning` 运行期填充（纯代码，无 LLM）。
 
 ## 环境变量（只需一个）
 
@@ -54,8 +55,17 @@ LLM 厂牌、模型、端点均可通过 `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_M
 ## 核心架构
 
 ```
-用户请求 → safety.py(能力边界) → pipeline.py(意图分类+检索+规则引擎+LLM) → 回答+引用+免责
+POST /api/v1/chat   → routes.py(薄适配器) → pipeline.process_chat(同步编排) → 回答+引用+免责
+                                                └─ safety → 意图分类 → RAG检索 → 规则引擎 → LLM → 兜底 → 免责
+POST /api/v1/medbox/check、GET/POST/DELETE /api/v1/medbox/{device_id}[/items[/{drug_id}]]
+                    → medbox_routes.py → MedboxService → calculator(叠加求和) + 规则引擎(相互作用) + 未入库药品 → CheckReport
 ```
+
+**关键分层（跨文件才能看清）**：
+- `app/chat/pipeline.py:process_chat()` 是**纯同步编排器，零 Web 框架依赖**——可直接脱离 HTTP 测试。`app/api/routes.py` 只是薄适配器：`run_in_threadpool` 放入线程池，并把 `LLMRetryExhausted` 映射为 HTTP 502。
+- `app/api/deps.py` 是**后端解析 + 依赖注入的唯一缝隙**：`_resolve_backend()` 按 `DATABASE_URL` 选 sqlite/supabase，工厂据此返回对应实现——检索器 `KeywordRetriever`(默认) / `PgVectorRetriever`+`Embedder`(Postgres) / `NullRetriever`；仓储 `SQLite*` / `Postgres*` / `InMemory*`（药箱仓储跟随药品仓储的后端类型）。换后端只动这里。
+- 数据库 schema 在 `migrations/*.sql`（0001 建表 / 0002 embedding 非空 / 0003 药箱表），非 ORM。
+- 药箱以 `device_id` 标识用户（MVP 阶段无登录）。
 
 | 层 | 模块 | 职责 |
 |----|------|------|
@@ -68,7 +78,9 @@ LLM 厂牌、模型、端点均可通过 `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_M
 | 入库 | `app/knowledge/` | 章节解析 → LLM 成分抽取 → 幂等 upsert |
 | LLM | `app/llm/` | OpenAI 兼容客户端 + 多厂牌预置 |
 
-**领域词汇**：`CONTEXT.md` 定义了产品/商品名/成分/物质/叠加/相互作用等术语的确切含义和边界。新增概念先查词汇表。
+**领域词汇**：`CONTEXT.md` 定义了产品/商品名/成分/物质/叠加/相互作用等术语的确切含义和边界。新增概念先查词汇表。架构决策记录在 `docs/adr/`——ADR-0001：保健品按「产品」同构建模、不单列实体；代码里 `Drug`/`drugs` 是「产品」的历史命名（可选重命名，勿当成新实体另起炉灶）。
+
+`app/reminder/`（用药提醒）目前是空占位、尚未实现，勿假设其存在行为。
 
 ## 说明书入库流程
 
@@ -77,8 +89,8 @@ LLM 厂牌、模型、端点均可通过 `LLM_PROVIDER` / `LLM_API_KEY` / `LLM_M
 ## 配置的自动化
 
 `.claude/settings.json` 配置了两项：
-- **PostToolUse hook**：修改 `app/core/safety.py` 或 `app/rules/` 下任一文件 → 自动跑 `pytest tests/ -x`
-- **skillOverrides**：`pillclear-*` 三个业务 skill 设为 `user-invocable-only`（开发时不被模型自动加载，仍可 `/skill-name` 手动调用）；`migrate-to-shoehorn` 隐藏
+- **PostToolUse hook**（PowerShell）：Write/Edit 命中 `app/core/safety.py` 或 `app/rules/` 下任一文件 → 自动跑 `python -m pytest tests/ -x --tb=short`
+- **skillOverrides**：`pillclear-*` 三个业务 skill 设为 `user-invocable-only`（开发时不被模型自动加载，仍可 `/skill-name` 手动调用）
 
 ## 业务操作（非开发任务）
 
