@@ -23,5 +23,5 @@ venv/
 
 # 第三方技能库（由 skills-lock.json 记录来源，用 npx skills@latest 恢复）
 .agents/skills/
-.claude/skills/
+# 注意：.claude/skills/ 不在忽略列表——PillClear 项目 skill 属于源码，应入仓库
 
