@@ -63,21 +63,29 @@ def calculate_ingredient_totals(
     ]
 
 
-def check_overlap(ingredient_totals: list[IngredientTotal]) -> OverlapResult:
-    """纯函数：检查成分叠加是否超过已知安全上限，生成中文警告。
+def check_overlap(
+    items: list[MedboxItem],
+    drugs: dict[int, list[Ingredient]],
+) -> OverlapResult:
+    """纯函数：药箱条目 + 各药成分 → 成分叠加结果与超限警告。
+
+    整合计算 + 检查两步：内部先计算共享成分日总摄入量，再生成超限警告。
+    调用者无需了解中间类型 IngredientTotal 或两步调用顺序。
 
     警告是确定性字符串拼接，不是 LLM 生成（铁律 #1）。
     未知上限（max_daily_mg=None）的成分不编造警告（铁律 #4）。
     """
+    totals = calculate_ingredient_totals(items, drugs)
     warnings: list[str] = []
-    for total in ingredient_totals:
+    for total in totals:
         if total.max_daily_mg is not None and total.total_amount_mg > total.max_daily_mg:
             warnings.append(
                 f"⚠️ {total.name} 每日合计 {total.total_amount_mg}mg 已超过安全上限 "
                 f"{total.max_daily_mg}mg（来自：{'、'.join(total.sources)}），"
                 "有过量风险，建议只保留其中一种药，或咨询药师确认。"
             )
-    return OverlapResult(overlapping=ingredient_totals, warnings=warnings)
+    return OverlapResult(overlapping=totals, warnings=warnings)
 
 
+# 保留旧版函数签名供外部调用（tests 等），新代码推荐使用上述合并版 check_overlap。
 __all__ = ["calculate_ingredient_totals", "check_overlap"]

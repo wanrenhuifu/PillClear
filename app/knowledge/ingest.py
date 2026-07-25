@@ -17,7 +17,7 @@ from app.knowledge.embedder import Embedder
 from app.knowledge.parser import extract_metadata, split_sections
 from app.knowledge.repository import (
     ChunkRow,
-    DrugRepository,
+    DrugWriter,
     InMemoryDrugRepository,
     PostgresDrugRepository,
 )
@@ -62,7 +62,7 @@ def ingest_text(
     *,
     llm: LLMClient,
     embedder: Embedder,
-    repo: DrugRepository,
+    repo: DrugWriter,
 ) -> DrugRecord:
     """入库单份说明书文本，幂等。返回构造出的 DrugRecord。
 
@@ -107,7 +107,7 @@ def ingest_directory(
     *,
     llm: LLMClient,
     embedder: Embedder,
-    repo: DrugRepository,
+    repo: DrugWriter,
 ) -> tuple[list[str], list[tuple[str, str]]]:
     """入库目录下所有 .txt/.md。返回 (成功商品名列表, 失败 [(商品名, 错误)])。
 
@@ -171,7 +171,7 @@ def main() -> None:
 
     if args.dry_run:
         # 完全离线：DB / embedding / LLM 三路全部使用本地替身
-        repo: DrugRepository = InMemoryDrugRepository()
+        repo: DrugWriter = InMemoryDrugRepository()
         embedder: Embedder = _ZeroEmbedder(settings)
         llm: Any = _DryRunLLM()
     else:

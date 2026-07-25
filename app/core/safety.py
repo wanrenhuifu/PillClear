@@ -1,10 +1,12 @@
-"""能力边界判断模块（v1）。
+"""能力边界判断模块（v2）。
 
 铁律落实：处方药 / 疾病诊断 / 特殊人群 / 急症信号属于越界问题，
 一律不提供个性化用药结论，返回写死的固定话术并引导就医或咨询药师。
 
-本版仅使用确定性的关键词 / 正则规则；LLM 意图识别后续再叠加
-（见 detect_category 的扩展点说明）。
+公开接口只有一个函数：
+    check(text, llm=None) → BoundaryResult
+    - llm=None：纯关键词检测（离线 / 测试 / 无 LLM 场景）
+    - 传入 llm：关键词放行后用 LLM 补漏，减少漏判
 """
 
 from __future__ import annotations
@@ -192,8 +194,8 @@ def _any_pattern_match(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool
     return False
 
 
-def detect_category(text: str) -> BoundaryCategory:
-    """判定文本所属的越界分类。
+def _detect_category(text: str) -> BoundaryCategory:
+    """判定文本所属的越界分类（私有实现）。
 
     优先级：急症 > 特殊人群 > 诊断 > 处方药 > 放行(NONE)。
     急症最高优先级，确保"孕妇 + 呼吸困难"等复合场景优先提示就医。
@@ -201,9 +203,6 @@ def detect_category(text: str) -> BoundaryCategory:
     否定检测：关键词紧邻中文否定词时跳过该命中，
     避免"我没有呼吸困难""不是处方药"等误判；
     普通词里嵌的单字（不错 / 特别）不构成否定。
-
-    扩展点：后续可在此函数前置一层 LLM 意图识别，
-    在关键词漏判时补充判定，但结论仍须回落到本枚举与固定话术。
     """
 
     if _any_keyword_match(text, _EMERGENCY_KW_RE) or _any_pattern_match(
@@ -221,10 +220,10 @@ def detect_category(text: str) -> BoundaryCategory:
     return BoundaryCategory.NONE
 
 
-def check_boundary(text: str) -> BoundaryResult:
-    """对外主入口：判断输入是否越界，并给出固定话术。"""
+def _check_boundary_keywords(text: str) -> BoundaryResult:
+    """关键词边界判断（私有实现：仅被 check() 调用）。"""
 
-    category = detect_category(text or "")
+    category = _detect_category(text or "")
     if category is BoundaryCategory.NONE:
         return BoundaryResult(category=category, blocked=False, message=None)
     return BoundaryResult(
@@ -236,22 +235,19 @@ def check_boundary(text: str) -> BoundaryResult:
 
 # LLM 分类置信度阈值：低于此值视为「拿不准」，回落到关键词结果（NONE）。
 # 铁律 #4：宁可不拦也不误拦普通 OTC 咨询——但关键词已拦的绝不会被 LLM 放行
-# （见 check_boundary_with_llm 的短路：blocked 直接返回，不进 LLM）。
+# （见 check 的短路：blocked 直接返回，不进 LLM）。
 _LLM_CONFIDENCE_THRESHOLD = 0.7
 
 # 低 max_tokens：分类任务只需输出一个小 JSON，压低生成长度以控制端到端延迟。
 _LLM_MAX_TOKENS = 60
 
 
-def classify_with_llm(text: str, llm: LLMClient) -> BoundaryResult:
-    """用 LLM 对「关键词放行」的文本做二次越界判断（补漏）。
+def _classify_boundary_with_llm(text: str, llm: LLMClient) -> BoundaryResult:
+    """用 LLM 对「关键词放行」的文本做二次越界判断（私有实现：仅被 check() 调用）。
 
     铁律 #3/#4：
     - LLM 结论必须回落到 BoundaryCategory 枚举 + 固定话术，不自由发挥；
     - 低置信度 / 非法分类 / 调用失败一律回落到 NONE（关键词结果），不阻断 /chat。
-
-    本函数仅在关键词返回 NONE 时被调用（见 check_boundary_with_llm），
-    因此「回落到关键词结果」即返回放行（NONE）。
     """
 
     try:
@@ -285,15 +281,19 @@ def classify_with_llm(text: str, llm: LLMClient) -> BoundaryResult:
     return BoundaryResult(category=category, blocked=True, message=_MESSAGES[category])
 
 
-def check_boundary_with_llm(text: str, llm: LLMClient) -> BoundaryResult:
-    """对外主入口（带 LLM 补漏）：关键词判断 + 放行后的 LLM 二次判断。
+def check(text: str, llm: LLMClient | None = None) -> BoundaryResult:
+    """对外唯一入口：判断输入是否越界并返回固定话术。
 
-    优先级：关键词规则是主防线，命中即拦（绝不交给 LLM 放行）；
-    仅当关键词放行（NONE）时才调用 LLM 补漏，减少漏判。
-    LLM 失败 / 低置信度时维持关键词的放行结论，不阻断 /chat。
+    - 关键词规则是主防线，命中即拦（绝不交给 LLM 放行）；
+    - llm 非 None 时：关键词放行后调用 LLM 补漏，减少漏判；
+    - llm 为 None 时：纯关键词检测（离线测试 / 无 LLM 场景）；
+    - LLM 失败 / 低置信度 / 非法分类时维持关键词的放行结论，不阻断 /chat。
     """
 
-    keyword_result = check_boundary(text)
-    if keyword_result.blocked:
+    keyword_result = _check_boundary_keywords(text)
+    if keyword_result.blocked or llm is None:
         return keyword_result
-    return classify_with_llm(text, llm)
+    return _classify_boundary_with_llm(text, llm)
+
+
+__all__ = ["BoundaryCategory", "BoundaryResult", "check"]

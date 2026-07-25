@@ -11,6 +11,7 @@ from app.rules.engine import (
     count_matches,
     format_warning,
     load_rules,
+    match_and_render,
     match_rules,
 )
 from app.rules.schemas import IngredientCondition, Rule, RuleConditions, RuleSet
@@ -189,6 +190,66 @@ def test_format_warning_broken_template_falls_back():
     """坏模板回落原文，绝不抛异常炸接口。"""
     rule = _rule(warning="bad { 模板").rules[0]
     assert format_warning(rule, count=1, total_mg=1) == "bad { 模板"
+
+
+# ── match_and_render 组合函数 ──────────────────────────────
+
+
+def test_match_and_render_combines_match_and_format():
+    """match_and_render 一次性完成匹配 + 渲染，warning 无残留占位符。"""
+    rs = _rule(min_count=2)
+    two = [
+        Ingredient(name="对乙酰氨基酚", amount=500, unit="mg"),
+        Ingredient(name="对乙酰氨基酚", amount=300, unit="mg"),
+    ]
+    result = match_and_render(rs, two)
+    assert len(result) == 1
+    assert "{" not in result[0].warning and "}" not in result[0].warning
+    assert "2" in result[0].warning
+
+
+def test_match_and_render_with_totals():
+    """提供 ingredient_totals 时使用精确的来源计数与总剂量。"""
+    rs = _rule(min_count=2, warning="对乙酰氨基酚 {count}次来源，合计{total_mg}mg")
+    two = [
+        Ingredient(name="对乙酰氨基酚", amount=325, unit="mg"),
+        Ingredient(name="对乙酰氨基酚", amount=500, unit="mg"),
+    ]
+    totals = {"对乙酰氨基酚": (3, 1975.0)}
+    result = match_and_render(rs, two, ingredient_totals=totals)
+    assert result[0].warning == "对乙酰氨基酚 3次来源，合计1975.0mg"
+
+
+def test_match_and_render_totals_fallback():
+    """ingredient_totals 不包含该成分 → 退化为 count_matches 计数 + 未知。"""
+    rs = _rule(min_count=2)
+    two = [
+        Ingredient(name="对乙酰氨基酚", amount=325, unit="mg"),
+        Ingredient(name="对乙酰氨基酚", amount=500, unit="mg"),
+    ]
+    result = match_and_render(rs, two, ingredient_totals={})
+    assert len(result) == 1
+    assert "未知" in result[0].warning
+    assert "2" in result[0].warning
+
+
+def test_match_and_render_empty_no_match():
+    """无匹配规则 → 空列表。"""
+    rs = _rule(min_count=2)
+    one = [Ingredient(name="对乙酰氨基酚", amount=500, unit="mg")]
+    assert match_and_render(rs, one) == []
+
+
+def test_match_and_render_does_not_mutate_original_rules():
+    """返回副本，原 RuleSet 单例不受影响。"""
+    rs = _rule(min_count=1, warning="orig")
+    two = [
+        Ingredient(name="对乙酰氨基酚", amount=325, unit="mg"),
+        Ingredient(name="对乙酰氨基酚", amount=500, unit="mg"),
+    ]
+    match_and_render(rs, two)
+    # 原 rule 的 warning 未被修改
+    assert rs.rules[0].warning == "orig"
 
 
 # ── load_rules 失败要响 ─────────────────────────────────────

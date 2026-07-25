@@ -128,10 +128,52 @@ def format_warning(rule: Rule, *, count: int, total_mg: float | None) -> str:
         return rule.warning
 
 
+def match_and_render(
+    rules: RuleSet,
+    ingredients: list[Ingredient],
+    lifestyle_substances: list[str] | None = None,
+    *,
+    ingredient_totals: dict[str, tuple[int, float | None]] | None = None,
+) -> list[Rule]:
+    """匹配规则并渲染 warning 模板（纯函数，match_rules + 渲染的组合）。
+
+    整合 match_rules 与 format_warning：触发规则 + 模板渲染一次性完成，
+    调用者无需再跨模块维护 count/total_mg 的计算逻辑（局部性收官）。
+
+    ingredient_totals: 成分名 → (来源条目数, 日总剂量 mg)；
+    提供时用于精准填充 {count}/{total_mg}；未提供或名称不在字典中时
+    退化为 count_matches 计数 + "未知" 总剂量（铁律 #4 保守）。
+
+    返回的 Rule 均为 model_copy 副本：不修改原 RuleSet 单例。
+    """
+    totals = ingredient_totals or {}
+    triggered = match_rules(rules, ingredients, lifestyle_substances)
+    rendered: list[Rule] = []
+    for rule in triggered:
+        count = 0
+        total_mg: float | None = None
+        if rule.conditions.ingredients:
+            cond = rule.conditions.ingredients[0]
+            entry = totals.get(cond.name)
+            if entry is not None:
+                count, total_mg = entry
+            else:
+                count = count_matches(cond, ingredients)
+        rendered.append(
+            rule.model_copy(
+                update={
+                    "warning": format_warning(rule, count=count, total_mg=total_mg)
+                }
+            )
+        )
+    return rendered
+
+
 __all__ = [
     "DEFAULT_RULES_DIR",
     "load_rules",
     "count_matches",
     "match_rules",
     "format_warning",
+    "match_and_render",
 ]

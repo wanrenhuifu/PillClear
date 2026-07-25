@@ -5,6 +5,7 @@ from app.rules.engine import (
     count_matches,
     format_warning,
     load_rules,
+    match_and_render,
     match_rules,
 )
 from app.rules.schemas import (
@@ -22,6 +23,7 @@ __all__ = [
     "match_rules",
     "count_matches",
     "format_warning",
+    "match_and_render",
     "IngredientCondition",
     "SubstanceCondition",
     "RuleConditions",

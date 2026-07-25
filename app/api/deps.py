@@ -161,9 +161,7 @@ def get_user_medbox_repository(
 
 
 def get_medbox_service(
-    rules: RuleSet = Depends(get_rule_set),
-    repo: DrugRepository = Depends(get_drug_repository),
     user_repo: UserMedboxRepository = Depends(get_user_medbox_repository),
 ) -> MedboxService:
-    """药箱服务：无状态编排器，每请求新建（D4）。user_repo 供持久化端点使用。"""
-    return MedboxService(rules, repo, user_repo=user_repo)
+    """药箱 CRUD 服务：绑定持久化仓储，每请求新建。"""
+    return MedboxService(user_repo)

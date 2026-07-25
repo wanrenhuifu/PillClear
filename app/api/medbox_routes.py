@@ -1,4 +1,4 @@
-"""药箱 API 路由：药箱检查（D4）。
+"""药箱 API 路由：药箱检查（D4）+ 持久化 CRUD。
 
 铁律 #1：叠加 / 相互作用判断全部走确定性规则引擎，本层只做编排与 I/O，永不碰 LLM。
 铁律 #5：本端点只返回结构化数据；大白话话术与免责声明由 /chat 聚合层承担。
@@ -9,7 +9,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from fastapi.concurrency import run_in_threadpool
 
-from app.api.deps import get_medbox_service
+from app.api.deps import get_drug_repository, get_medbox_service, get_rule_set
+from app.knowledge.repository import DrugReader
 from app.medbox.schemas import (
     CheckReport,
     Medbox,
@@ -18,15 +19,17 @@ from app.medbox.schemas import (
     MedboxItemAddRequest,
     MedboxResponse,
 )
-from app.medbox.service import MedboxService
+from app.medbox.service import MedboxService, check_medbox
+from app.rules.schemas import RuleSet
 
 router = APIRouter()
 
 
 @router.post("/medbox/check", response_model=CheckReport)
-async def check_medbox(
+async def medbox_check(
     request: MedboxCheckRequest,
-    service: MedboxService = Depends(get_medbox_service),
+    rules: RuleSet = Depends(get_rule_set),
+    repo: DrugReader = Depends(get_drug_repository),
 ) -> CheckReport:
     """个人药箱检查：成分叠加 + 规则匹配。
 
@@ -34,8 +37,10 @@ async def check_medbox(
     与 /chat 同款 run_in_threadpool 放入线程池。
     """
     return await run_in_threadpool(
-        service.check,
+        check_medbox,
         Medbox(items=request.items),
+        rules,
+        repo,
         request.lifestyle_substances,
     )
 

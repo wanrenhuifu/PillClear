@@ -55,47 +55,46 @@ def test_single_drug_no_overlap_entry():
 
 
 def test_over_limit_warning():
-    totals = [
-        IngredientTotal(
-            name="对乙酰氨基酚",
-            total_amount_mg=4500.0,
-            sources=["泰诺", "白加黑"],
-            max_daily_mg=4000.0,
-        )
-    ]
-    result = check_overlap(totals)
+    """泰诺+白加黑 共享对乙酰氨基酚 4500mg > 4000mg 上限 → 生成警告。"""
+    items = [_item(1, "泰诺", 9), _item(2, "白加黑", 9)]
+    drugs = {
+        1: [Ingredient(name="对乙酰氨基酚", amount=500, unit="mg")],
+        2: [Ingredient(name="对乙酰氨基酚", amount=325, unit="mg")],  # 7425mg total
+    }
+    result = check_overlap(items, drugs)
     assert len(result.warnings) == 1
     assert "对乙酰氨基酚" in result.warnings[0]
     assert "4000" in result.warnings[0]
-    assert result.overlapping == totals
+    assert len(result.overlapping) == 1
+    assert result.overlapping[0].name == "对乙酰氨基酚"
 
 
 def test_under_limit_no_warning():
-    totals = [
-        IngredientTotal(
-            name="对乙酰氨基酚",
-            total_amount_mg=975.0,
-            sources=["泰诺", "必理通"],
-            max_daily_mg=4000.0,
-        )
-    ]
-    assert check_overlap(totals).warnings == []
+    """泰诺+必理通 共享对乙酰氨基酚 975mg < 4000mg → 无警告。"""
+    items = [_item(1, "泰诺", 3), _item(2, "必理通", 1)]
+    drugs = {
+        1: [Ingredient(name="对乙酰氨基酚", amount=325, unit="mg")],
+        2: [Ingredient(name="对乙酰氨基酚", amount=0, unit="mg")],  # 0mg
+    }
+    result = check_overlap(items, drugs)
+    assert result.warnings == []
 
 
 def test_unknown_limit_no_warning():
     """未知安全上限不编造警告（铁律 #4）。"""
-    totals = [
-        IngredientTotal(
-            name="圣约翰草", total_amount_mg=600.0, sources=["A", "B"]
-        )
-    ]
-    assert check_overlap(totals).warnings == []
+    items = [_item(1, "A"), _item(2, "B")]
+    drugs = {
+        1: [Ingredient(name="圣约翰草", amount=300, unit="mg")],
+        2: [Ingredient(name="圣约翰草", amount=300, unit="mg")],
+    }
+    result = check_overlap(items, drugs)
+    assert result.warnings == []
+    assert result.overlapping[0].max_daily_mg is None
 
 
 def test_empty_medbox_no_raise():
-    assert calculate_ingredient_totals([], {}) == []
-    assert check_overlap([]).warnings == []
-    assert check_overlap([]).overlapping == []
+    assert check_overlap([], {}).warnings == []
+    assert check_overlap([], {}).overlapping == []
 
 
 def test_ingredient_without_amount_excluded():

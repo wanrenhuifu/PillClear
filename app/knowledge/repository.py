@@ -1,6 +1,8 @@
 """药品数据仓储层。
 
-- DrugRepository：入库管线依赖的接口（Protocol）。
+- DrugWriter：入库管线依赖的写入接口（Protocol）。
+- DrugReader：药箱检查依赖的查询接口（Protocol）。
+- 一个实现类可同时满足两者（如 PostgresDrugRepository）。
 - InMemoryDrugRepository：离线测试与 --dry-run 用，实现幂等 upsert 语义。
 - PostgresDrugRepository：psycopg3 + pgvector 的真实实现。
 """
@@ -15,8 +17,8 @@ from app.knowledge.schemas import DrugRecord
 ChunkRow = tuple[str, str, list[float]]
 
 
-class DrugRepository(Protocol):
-    """入库管线所需的仓储接口。"""
+class DrugWriter(Protocol):
+    """药品写入接口：说明书入库管线所需的仓储方法。"""
 
     def upsert_drug(self, record: DrugRecord) -> int:
         """按 brand_name upsert 药品，返回 drug_id（幂等）。"""
@@ -27,18 +29,24 @@ class DrugRepository(Protocol):
         ...
 
     def save_drug(self, record: DrugRecord, chunks: list[ChunkRow]) -> int:
-        """原子保存药品及其章节 chunks（幂等），返回 drug_id。
-
-        upsert 与 chunks 重写必须同成败：防止药品行已提交而
-        chunks 写入失败，留下孤儿行或新旧混杂的 stale chunks。
-        """
+        """原子保存药品及其章节 chunks（幂等），返回 drug_id。"""
         ...
 
     def count_drugs(self) -> int: ...
 
     def count_chunks(self) -> int: ...
 
-    def get_drug_by_brand(self, brand_name: str) -> dict[str, Any] | None: ...
+
+class DrugReader(Protocol):
+    """药品查询接口：药箱检查所需的仓储方法。"""
+
+    def get_drug_by_brand(self, brand_name: str) -> dict[str, Any] | None:
+        """按商品名查询药品记录。"""
+        ...
+
+
+# 向后兼容别名：历史代码仍可用 DrugRepository 替代 DrugWriter。
+DrugRepository = DrugWriter
 
 
 class InMemoryDrugRepository:
@@ -184,7 +192,9 @@ class PostgresDrugRepository:
 
 
 __all__ = [
-    "DrugRepository",
+    "DrugWriter",
+    "DrugReader",
+    "DrugRepository",  # 向后兼容：= DrugWriter
     "InMemoryDrugRepository",
     "PostgresDrugRepository",
     "ChunkRow",

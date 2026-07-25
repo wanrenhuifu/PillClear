@@ -20,8 +20,7 @@ from app.knowledge.schemas import DrugRecord, Ingredient
 from app.main import create_app
 from app.medbox.repository import InMemoryUserMedboxRepository
 from app.medbox.schemas import Medbox, MedboxItem
-from app.medbox.service import MedboxService
-from app.rules.schemas import RuleSet
+from app.medbox.service import MedboxService, check_medbox
 
 
 # ── 种子药品仓储：泰诺(1) / 必理通(2) 共享对乙酰氨基酚 ────────────────────
@@ -117,9 +116,8 @@ class TestInMemoryUserMedboxRepository:
 
 # ── 2. MedboxService 持久化方法 ──────────────────────────────────────────
 def _service() -> tuple[MedboxService, InMemoryUserMedboxRepository]:
-    drugs = _seed_drug_repo()
     user_repo = InMemoryUserMedboxRepository(brands=_brands())
-    service = MedboxService(RuleSet(rules=[]), drugs, user_repo=user_repo)
+    service = MedboxService(user_repo)
     return service, user_repo
 
 
@@ -162,15 +160,16 @@ class TestMedboxServicePersistence:
         assert service.get_medbox("B").items == []
 
     def test_persisted_medbox_feeds_check(self):
-        """持久化药箱可直接喂给 MedboxService.check（D4 链路复用）。"""
+        """持久化药箱可直接喂给 check_medbox（D4 链路复用）。"""
         drugs = _seed_drug_repo()
         user_repo = InMemoryUserMedboxRepository(brands=_brands())
         from app.rules.engine import load_rules, DEFAULT_RULES_DIR
 
-        service = MedboxService(load_rules(DEFAULT_RULES_DIR), drugs, user_repo=user_repo)
+        service = MedboxService(user_repo)
         service.add_to_medbox("dev", MedboxItem(drug_id=1, brand_name="泰诺", dosage_per_day=3))
         service.add_to_medbox("dev", MedboxItem(drug_id=2, brand_name="必理通", dosage_per_day=2))
-        report = service.check(service.get_medbox("dev"))
+        rules = load_rules(DEFAULT_RULES_DIR)
+        report = check_medbox(service.get_medbox("dev"), rules, drugs)
         assert [t.name for t in report.overlap.overlapping] == ["对乙酰氨基酚"]
 
 

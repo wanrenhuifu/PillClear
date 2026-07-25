@@ -9,7 +9,7 @@ from app.medbox.schemas import (
     MedboxItem,
     OverlapResult,
 )
-from app.medbox.service import MedboxService
+from app.medbox.service import MedboxService, check_medbox
 
 __all__ = [
     "calculate_ingredient_totals",
@@ -21,4 +21,5 @@ __all__ = [
     "CheckReport",
     "MedboxCheckRequest",
     "MedboxService",
+    "check_medbox",
 ]

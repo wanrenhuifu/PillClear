@@ -4,7 +4,9 @@ from app.knowledge.embedder import Embedder
 from app.knowledge.ingest import ingest_directory, ingest_text
 from app.knowledge.parser import extract_metadata, split_sections
 from app.knowledge.repository import (
+    DrugReader,
     DrugRepository,
+    DrugWriter,
     InMemoryDrugRepository,
     PostgresDrugRepository,
 )
@@ -24,6 +26,8 @@ __all__ = [
     "ingest_directory",
     "split_sections",
     "extract_metadata",
+    "DrugReader",
+    "DrugWriter",
     "DrugRepository",
     "InMemoryDrugRepository",
     "PostgresDrugRepository",
