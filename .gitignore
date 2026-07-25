@@ -21,7 +21,11 @@ venv/
 # 本地草稿 / 工作区（不入仓库）
 .scratch/
 
-# 第三方技能库（由 skills-lock.json 记录来源，用 npx skills@latest 恢复）
+# 第三方/系统自带技能库（不入仓库）
 .agents/skills/
-# 注意：.claude/skills/ 不在忽略列表——PillClear 项目 skill 属于源码，应入仓库
+.claude/skills/*
+# 项目自有 skill —— 例外放行
+!.claude/skills/pillclear-insert-ingestion/
+!.claude/skills/pillclear-rule-engine/
+!.claude/skills/pillclear-safety-review/
 
