@@ -22,7 +22,7 @@ from app.medbox.repository import (
 )
 from app.medbox.service import MedboxService
 from app.medbox.sqlite_medbox_repo import SQLiteUserMedboxRepository
-from app.rag import NullRetriever, PgVectorRetriever, Retriever, SQLiteVectorRetriever
+from app.rag import KeywordRetriever, NullRetriever, PgVectorRetriever, Retriever
 from app.rules.engine import DEFAULT_RULES_DIR, load_rules
 from app.rules.schemas import RuleSet
 
@@ -81,11 +81,11 @@ def get_retriever(
     entry = _RETRIEVERS.get(id(settings))
     if entry is not None:
         return entry[1]
-    if settings.pillclear_backend == "sqlite":
-        # 显式 sqlite 后端 → 本地 sqlite-vec 检索。
-        retriever: Retriever = SQLiteVectorRetriever(
-            embedder=Embedder(settings), db_path=_resolve_db_path(settings)
-        )
+    if settings.pillclear_backend == "sqlite" or (
+        not settings.pillclear_backend and not settings.database_url
+    ):
+        # SQLite 后端 → 关键词精确匹配检索（无需 embedding）。
+        retriever: Retriever = KeywordRetriever(db_path=_resolve_db_path(settings))
     else:
         # 现有逻辑一字不改：配置 DATABASE_URL → pgvector；未配置 → NullRetriever。
         # 检索器不随 _resolve_backend 自动切 sqlite——无配置时保留「开发中」占位

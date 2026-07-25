@@ -1,10 +1,16 @@
-"""app.knowledge.embedder 单元测试：分批 + 瞬时故障重试 + 返回校验（mock openai client）。"""
+"""app.knowledge.embedder 单元测试：分批 + 瞬时故障重试 + 返回校验 + 多厂牌（mock openai client）。"""
 
 import httpx
 import openai
 import pytest
 
 from app.config import Settings
+from app.knowledge.embed_providers import (
+    EMBEDDING_PROVIDER_PRESETS,
+    resolve_embedding_api_key,
+    resolve_embedding_base_url,
+    resolve_embedding_model,
+)
 from app.knowledge.embedder import Embedder
 
 
@@ -121,3 +127,145 @@ def test_wrong_dims_rejected():
     embedder = Embedder(_settings(), client=client)
     with pytest.raises(ValueError, match="维度"):
         embedder.embed(["a"])
+
+
+# ── Embedding 多厂牌：解析函数 ─────────────────────────────────────────
+
+
+class TestResolveEmbeddingApiKey:
+    def test_embedding_key_takes_precedence(self):
+        s = Settings(
+            embedding_api_key="emb-key",
+            llm_api_key="llm-key",
+            _env_file=None,
+        )
+        assert resolve_embedding_api_key(s) == "emb-key"
+
+    def test_falls_back_to_llm_api_key(self):
+        s = Settings(llm_api_key="llm-key", _env_file=None)
+        assert resolve_embedding_api_key(s) == "llm-key"
+
+    def test_does_not_fall_back_to_deepseek_api_key(self):
+        """deepseek_api_key 是 LLM 厂牌专属 key，不应被送到 embedding 端点。"""
+        s = Settings(deepseek_api_key="ds-key", _env_file=None)
+        assert resolve_embedding_api_key(s) == ""
+
+    def test_llm_api_key_fallback(self):
+        """llm_api_key 设置时用作 embedding 回退，deepseek 不干扰。"""
+        s = Settings(
+            llm_api_key="llm-key", deepseek_api_key="ds-key", _env_file=None
+        )
+        assert resolve_embedding_api_key(s) == "llm-key"
+
+    def test_returns_empty_when_none_set(self):
+        s = Settings(_env_file=None)
+        assert resolve_embedding_api_key(s) == ""
+
+
+class TestResolveEmbeddingBaseUrl:
+    def test_explicit_override_wins(self):
+        s = Settings(
+            embedding_provider="siliconflow",
+            embedding_base_url="https://custom-emb.example.com/v1",
+            _env_file=None,
+        )
+        assert resolve_embedding_base_url(s) == "https://custom-emb.example.com/v1"
+
+    def test_falls_back_to_provider_preset(self):
+        s = Settings(embedding_provider="openai", _env_file=None)
+        assert resolve_embedding_base_url(s) == "https://api.openai.com/v1"
+
+    def test_unknown_provider_falls_back(self):
+        s = Settings(embedding_provider="custom-unknown", _env_file=None)
+        assert resolve_embedding_base_url(s) == "https://api.siliconflow.cn/v1"
+
+    def test_default_provider_is_siliconflow(self):
+        s = Settings(_env_file=None)
+        assert resolve_embedding_base_url(s) == "https://api.siliconflow.cn/v1"
+
+
+class TestResolveEmbeddingModel:
+    def test_explicit_override_wins(self):
+        s = Settings(
+            embedding_provider="siliconflow",
+            embedding_model="custom-model",
+            _env_file=None,
+        )
+        assert resolve_embedding_model(s) == "custom-model"
+
+    def test_falls_back_to_provider_preset(self):
+        s = Settings(embedding_provider="openai", _env_file=None)
+        assert resolve_embedding_model(s) == "text-embedding-3-small"
+
+    def test_unknown_provider_falls_back(self):
+        s = Settings(embedding_provider="custom-unknown", _env_file=None)
+        assert resolve_embedding_model(s) == "BAAI/bge-m3"
+
+    def test_default_provider_is_siliconflow(self):
+        s = Settings(_env_file=None)
+        assert resolve_embedding_model(s) == "BAAI/bge-m3"
+
+
+class TestEmbeddingProviderPresets:
+    @pytest.mark.parametrize("key", list(EMBEDDING_PROVIDER_PRESETS.keys()))
+    def test_preset_has_valid_fields(self, key):
+        preset = EMBEDDING_PROVIDER_PRESETS[key]
+        assert preset.default_base_url.startswith("http")
+        assert len(preset.default_model) > 0
+        assert preset.key == key
+        assert len(preset.name) > 0
+        assert preset.suggested_dims > 0
+
+
+class TestEmbedderUsesProviderResolution:
+    """验证 Embedder 确实使用 provider 解析而非直接读 settings 字段。"""
+
+    def test_switches_endpoint_by_provider(self):
+        """切换到 openai 后，client 指向 OpenAI 端点。"""
+        client = _FakeEmbeddingsClient(dims=1536)
+        settings = Settings(
+            embedding_api_key="k",
+            embedding_provider="openai",
+            embedding_dims=1536,
+            _env_file=None,
+        )
+        # 注入 fake client，不真正连网
+        embedder = Embedder(settings, client=client)
+        vectors = embedder.embed(["test"])
+        assert len(vectors) == 1
+
+    def test_ollama_provider(self):
+        """Ollama 厂牌使用本地端点。"""
+        client = _FakeEmbeddingsClient(dims=768)
+        settings = Settings(
+            embedding_api_key="ollama",
+            embedding_provider="ollama",
+            embedding_dims=768,
+            _env_file=None,
+        )
+        embedder = Embedder(settings, client=client)
+        vectors = embedder.embed(["test"])
+        assert len(vectors) == 1
+
+    def test_explicit_model_overrides_provider(self):
+        """显式 embedding_model 应覆盖 provider 默认。"""
+        client = _FakeEmbeddingsClient(dims=1024)
+        settings = Settings(
+            embedding_api_key="k",
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-large",
+            embedding_dims=1024,
+            _env_file=None,
+        )
+        embedder = Embedder(settings, client=client)
+        embedder.embed(["test"])
+        assert client.create_calls == 1
+
+    def test_backward_compat_old_settings_still_works(self):
+        """仅设旧字段（无 embedding_provider），行为与改造前一致。"""
+        client = _FakeEmbeddingsClient(dims=1024)
+        settings = Settings(embedding_api_key="k", embedding_dims=1024, _env_file=None)
+        embedder = Embedder(settings, client=client)
+        vectors = embedder.embed(["a", "b"])
+        assert len(vectors) == 2
+        assert client.create_calls == 1

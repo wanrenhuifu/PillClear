@@ -1,6 +1,13 @@
-"""RAG 层：向量说明书引用检索（D3）。"""
+"""RAG 层：说明书引用检索（D3）——关键词匹配为主，向量检索为辅。"""
 
+from app.rag.keyword_retriever import KeywordRetriever
 from app.rag.retriever import NullRetriever, PgVectorRetriever, Retriever
 from app.rag.sqlite_retriever import SQLiteVectorRetriever
 
-__all__ = ["Retriever", "NullRetriever", "PgVectorRetriever", "SQLiteVectorRetriever"]
+__all__ = [
+    "Retriever",
+    "NullRetriever",
+    "PgVectorRetriever",
+    "SQLiteVectorRetriever",
+    "KeywordRetriever",
+]

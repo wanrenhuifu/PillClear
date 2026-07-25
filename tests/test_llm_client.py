@@ -186,3 +186,75 @@ def test_response_format_kwarg_rejected(respx_mock, settings):
             LLMAnswer,
             response_format={"type": "text"},
         )
+
+
+# ── 多厂牌测试 ───────────────────────────────────────────────────────
+
+
+def test_provider_switch_changes_base_url(respx_mock):
+    """切换到 qwen 后，请求发往通义千问端点而非 DeepSeek。"""
+    qwen_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    route = respx_mock.post(qwen_url).mock(
+        return_value=make_completion('{"answer":"a","confidence":0.1}')
+    )
+    settings = Settings(llm_api_key="k", llm_provider="qwen", _env_file=None)
+    LLMClient(settings).complete_json([{"role": "user", "content": "x"}], LLMAnswer)
+    assert route.called
+
+
+def test_provider_switch_changes_model(respx_mock):
+    """切换到 glm 后，sent model 使用智谱默认模型而非 deepseek-v4-pro。"""
+    glm_url = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    route = respx_mock.post(glm_url).mock(
+        return_value=make_completion('{"answer":"a","confidence":0.1}')
+    )
+    settings = Settings(llm_api_key="k", llm_provider="glm", _env_file=None)
+    LLMClient(settings).complete_json([{"role": "user", "content": "x"}], LLMAnswer)
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["model"] == "glm-4-plus"
+
+
+def test_explicit_model_overrides_provider_default(respx_mock):
+    """显式 llm_model 应覆盖 provider preset 的默认模型。"""
+    qwen_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    route = respx_mock.post(qwen_url).mock(
+        return_value=make_completion('{"answer":"a","confidence":0.1}')
+    )
+    settings = Settings(
+        llm_api_key="k",
+        llm_provider="qwen",
+        llm_model="qwen-max",
+        _env_file=None,
+    )
+    LLMClient(settings).complete_json([{"role": "user", "content": "x"}], LLMAnswer)
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["model"] == "qwen-max"
+
+
+def test_explicit_base_url_overrides_provider_default(respx_mock):
+    """显式 llm_base_url 应覆盖 provider preset 的默认端点。"""
+    custom_url = "https://my-proxy.example.com/v1/chat/completions"
+    route = respx_mock.post(custom_url).mock(
+        return_value=make_completion('{"answer":"a","confidence":0.1}')
+    )
+    settings = Settings(
+        llm_api_key="k",
+        llm_provider="deepseek",
+        llm_base_url="https://my-proxy.example.com/v1",
+        _env_file=None,
+    )
+    LLMClient(settings).complete_json([{"role": "user", "content": "x"}], LLMAnswer)
+    assert route.called
+
+
+def test_ollama_provider_uses_local_endpoint(respx_mock):
+    """Ollama 厂牌默认连 localhost。"""
+    ollama_url = "http://localhost:11434/v1/chat/completions"
+    route = respx_mock.post(ollama_url).mock(
+        return_value=make_completion('{"answer":"a","confidence":0.1}')
+    )
+    settings = Settings(llm_api_key="ollama", llm_provider="ollama", _env_file=None)
+    LLMClient(settings).complete_json([{"role": "user", "content": "x"}], LLMAnswer)
+    assert route.called
+    sent = json.loads(route.calls[0].request.content)
+    assert sent["model"] == "llama3"

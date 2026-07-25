@@ -1,6 +1,6 @@
 """app.knowledge.ingest 单元测试：成份抽取结构、chunk 落库、幂等性。
 
-用 InMemoryDrugRepository + 假 embedder + mock llm_client，全程离线。
+用 InMemoryDrugRepository + mock llm_client，全程离线。
 """
 
 import pytest
@@ -25,16 +25,6 @@ class FakeLLM:
         return IngredientList(ingredients=self._ingredients)
 
 
-class FakeEmbedder:
-    """返回固定 1024 维零向量，不联网。"""
-
-    def __init__(self, dims=1024):
-        self.dims = dims
-
-    def embed(self, texts):
-        return [[0.0] * self.dims for _ in texts]
-
-
 TAINUO_INGREDIENTS = [
     Ingredient(name="对乙酰氨基酚", amount=325, unit="mg"),
     Ingredient(name="马来酸氯苯那敏", amount=2, unit="mg"),
@@ -45,7 +35,7 @@ def test_ingredient_extraction_written_to_jsonb():
     repo = InMemoryDrugRepository()
     llm = FakeLLM(TAINUO_INGREDIENTS)
     ingest_text(
-        "泰诺", SAMPLE_INSERT_TAINUO, llm=llm, embedder=FakeEmbedder(), repo=repo
+        "泰诺", SAMPLE_INSERT_TAINUO, llm=llm, repo=repo
     )
     drug = repo.get_drug_by_brand("泰诺")
     assert drug is not None
@@ -58,28 +48,24 @@ def test_ingredient_extraction_written_to_jsonb():
     assert llm.calls == 1
 
 
-def test_chunks_count_and_embedding_dim():
+def test_chunks_count():
     repo = InMemoryDrugRepository()
     ingest_text(
-        "泰诺", SAMPLE_INSERT_TAINUO, llm=FakeLLM([]), embedder=FakeEmbedder(), repo=repo
+        "泰诺", SAMPLE_INSERT_TAINUO, llm=FakeLLM([]), repo=repo
     )
     expected_sections = len(split_sections(SAMPLE_INSERT_TAINUO))
     assert repo.count_chunks() == expected_sections
-    drug_id = repo.get_drug_by_brand("泰诺")["id"]
-    first_embedding = repo._chunks[drug_id][0][2]
-    assert len(first_embedding) == 1024
 
 
 def test_ingest_is_idempotent():
     repo = InMemoryDrugRepository()
     llm = FakeLLM(TAINUO_INGREDIENTS)
-    embedder = FakeEmbedder()
 
-    ingest_text("泰诺", SAMPLE_INSERT_TAINUO, llm=llm, embedder=embedder, repo=repo)
+    ingest_text("泰诺", SAMPLE_INSERT_TAINUO, llm=llm, repo=repo)
     drugs_after_first = repo.count_drugs()
     chunks_after_first = repo.count_chunks()
 
-    ingest_text("泰诺", SAMPLE_INSERT_TAINUO, llm=llm, embedder=embedder, repo=repo)
+    ingest_text("泰诺", SAMPLE_INSERT_TAINUO, llm=llm, repo=repo)
     assert repo.count_drugs() == drugs_after_first == 1
     assert repo.count_chunks() == chunks_after_first
 
@@ -91,7 +77,6 @@ def test_ingest_without_sections_refused_and_existing_data_kept():
         "泰诺",
         SAMPLE_INSERT_TAINUO,
         llm=FakeLLM(TAINUO_INGREDIENTS),
-        embedder=FakeEmbedder(),
         repo=repo,
     )
     chunks_before = repo.count_chunks()
@@ -101,7 +86,6 @@ def test_ingest_without_sections_refused_and_existing_data_kept():
             "泰诺",
             "一段没有章节结构的随手笔记",
             llm=FakeLLM([]),
-            embedder=FakeEmbedder(),
             repo=repo,
         )
 
@@ -125,7 +109,7 @@ def test_main_ingredient_section_alias_recognized():
     )
     repo = InMemoryDrugRepository()
     llm = FakeLLM([Ingredient(name="对乙酰氨基酚", amount=0.5, unit="g")])
-    ingest_text("必理通", text, llm=llm, embedder=FakeEmbedder(), repo=repo)
+    ingest_text("必理通", text, llm=llm, repo=repo)
     assert llm.calls == 1  # 找到了成份章节并调用抽取
     drug = repo.get_drug_by_brand("必理通")
     assert drug["ingredients"][0]["name"] == "对乙酰氨基酚"

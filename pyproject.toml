@@ -15,8 +15,9 @@ dependencies = [
     "psycopg[binary]>=3.1",
     "pgvector>=0.2",
     "pyyaml>=6.0",
-    "sqlite-vec>=0.1",
 ]
+# 注意：sqlite-vec 已移除（检索改为关键词匹配，不再需要向量扩展）。
+# psycopg + pgvector 仅 Postgres 路径需要；SQLite 默认路径无需安装。
 
 [project.optional-dependencies]
 dev = [

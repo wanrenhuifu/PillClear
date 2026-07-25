@@ -222,11 +222,13 @@ def test_embedder_failure_returns_empty_and_logs(caplog):
     assert any("向量化" in r.message for r in caplog.records)
 
 
-def test_get_retriever_without_database_url_returns_null():
-    """未配置 DATABASE_URL → NullRetriever 占位（向后兼容）。"""
+def test_get_retriever_without_database_url_returns_keyword():
+    """未配置 DATABASE_URL → KeywordRetriever（SQLite 默认后端 + 关键词检索）。"""
     retriever = deps.get_retriever(_settings(database_url=""))
 
-    assert isinstance(retriever, NullRetriever)
+    from app.rag.keyword_retriever import KeywordRetriever
+
+    assert isinstance(retriever, KeywordRetriever)
 
 
 def test_get_retriever_with_database_url_returns_pgvector():

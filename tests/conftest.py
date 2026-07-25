@@ -4,18 +4,22 @@ import httpx
 import pytest
 
 from app.config import DEFAULT_MODEL, Settings
+from app.llm.providers import PROVIDER_PRESETS
 
-# 从 Settings 默认值派生，禁止硬编码 URL。
-# _env_file=None：测试配置不得读取仓库 .env，保证套件与开发机环境无关
-# （否则 .env 里的 LLM_MAX_RETRIES / LLM_MODEL / LLM_BASE_URL 会让测试时绿时炸）。
-_TEST_SETTINGS = Settings(deepseek_api_key="test-key", _env_file=None)
-DEEPSEEK_URL = f"{_TEST_SETTINGS.llm_base_url}/chat/completions"
+# respx 拦截的目标 URL——改造后 llm_base_url 默认值为空字符串（由 provider preset
+# 解析），从 preset 推导以保持与默认厂牌一致，避免硬编码。
+DEEPSEEK_BASE_URL = PROVIDER_PRESETS["deepseek"].default_base_url
+DEEPSEEK_URL = f"{DEEPSEEK_BASE_URL}/chat/completions"
+
+# _env_file=None：测试配置不得读取仓库 .env，保证套件与开发机环境无关。
+TEST_SETTINGS_KWARGS: dict = {"deepseek_api_key": "test-key", "_env_file": None}
+_TEST_SETTINGS = Settings(**TEST_SETTINGS_KWARGS)
 
 
 @pytest.fixture
 def settings() -> Settings:
     """默认测试配置（api_key 用占位值，不读 .env，避免真实网络）。"""
-    return Settings(deepseek_api_key="test-key", _env_file=None)
+    return Settings(**TEST_SETTINGS_KWARGS)
 
 
 def make_completion(content: str, usage: dict | None = None) -> httpx.Response:

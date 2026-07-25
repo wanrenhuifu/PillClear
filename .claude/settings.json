@@ -1,0 +1,24 @@
+﻿{
+    "hooks":  {
+                  "PostToolUse":  [
+                                      {
+                                          "matcher":  "Write|Edit",
+                                          "hooks":  [
+                                                        {
+                                                            "type":  "command",
+                                                            "command":  "$json = ($input | Out-String).Trim(); if ($json) { $obj = $json | ConvertFrom-Json; $f = if ($obj.tool_response.filePath) { $obj.tool_response.filePath } else { $obj.tool_input.file_path }; if ($f -and ($f -match \u0027(app[\\\\/]core[\\\\/]safety\\.py|app[\\\\/]rules[\\\\/])\u0027)) { python -m pytest tests/ -x --tb=short } }",
+                                                            "shell":  "powershell",
+                                                            "timeout":  120,
+                                                            "statusMessage":  "Running safety tests (safety.py/rules changed)..."
+                                                        }
+                                                    ]
+                                      }
+                                  ]
+              },
+    "skillOverrides":  {
+                           "pillclear-safety-review":  "user-invocable-only",
+                           "pillclear-insert-ingestion":  "user-invocable-only",
+                           "pillclear-rule-engine":  "user-invocable-only",
+                           "migrate-to-shoehorn":  "off"
+                       }
+}

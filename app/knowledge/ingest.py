@@ -61,14 +61,16 @@ def ingest_text(
     text: str,
     *,
     llm: LLMClient,
-    embedder: Embedder,
     repo: DrugWriter,
+    embedder: Embedder | None = None,
 ) -> DrugRecord:
     """入库单份说明书文本，幂等。返回构造出的 DrugRecord。
 
     未识别到任何章节（或章节全空）时抛 ValueError 拒绝入库——
     否则 upsert 会用空成分覆盖、replace_chunks 会删光已有 chunks，
     一份坏文件就能无声毁掉此前入库的正确数据。
+
+    embedder 参数保留以兼容调用方，但不使用——检索走关键词匹配。
     """
 
     sections = split_sections(text)
@@ -76,16 +78,13 @@ def ingest_text(
         raise ValueError(
             f"说明书「{brand_name}」未识别到任何【章节】标题，拒绝入库以保护已有数据"
         )
-    # 过滤空白章节，避免浪费 embedding 配额
+    # 过滤空白章节，避免浪费存储
     non_empty = [s for s in sections if s.content.strip()]
     if not non_empty:
         raise ValueError(f"说明书「{brand_name}」所有章节内容为空，拒绝入库")
 
     metadata = extract_metadata(text, sections)
     ingredients = extract_ingredients(llm, _find_ingredient_section(sections))
-
-    # 先向量化再写库：embedding 失败时数据库无写入，避免孤儿 drug 行
-    vectors = embedder.embed([s.content for s in non_empty])
 
     record = DrugRecord(
         brand_name=brand_name,
@@ -94,8 +93,9 @@ def ingest_text(
         ingredients_verified=False,
     )
 
+    # 章节存为纯文本 chunk（不含嵌入向量——检索走关键词匹配）
     chunks: list[ChunkRow] = [
-        (s.section, s.content, vec) for s, vec in zip(non_empty, vectors)
+        (s.section, s.content, []) for s in non_empty
     ]
     # 原子保存（Postgres 下同一事务）：药品行与 chunks 同成败
     repo.save_drug(record, chunks)
@@ -174,11 +174,18 @@ def main() -> None:
         repo: DrugWriter = InMemoryDrugRepository()
         embedder: Embedder = _ZeroEmbedder(settings)
         llm: Any = _DryRunLLM()
-    else:
-        if not settings.database_url:
-            raise SystemExit("未配置 DATABASE_URL，无法写库；或使用 --dry-run。")
+    elif settings.database_url:
+        # Supabase Postgres 后端（保留向量检索路径）
         repo = PostgresDrugRepository(settings.database_url)
         embedder = Embedder(settings)
+        llm = LLMClient(settings)
+    else:
+        # 默认 SQLite 本地后端（无需 DATABASE_URL，无需 embedding）。
+        from app.knowledge.sqlite_repo import SQLiteDrugRepository
+
+        db_path = str(settings.resolved_data_dir() / "pillclear.db")
+        repo = SQLiteDrugRepository(db_path)
+        embedder = None  # SQLite 走关键词匹配，不需要向量化
         llm = LLMClient(settings)
 
     brands, failures = ingest_directory(

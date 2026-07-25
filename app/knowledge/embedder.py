@@ -1,4 +1,4 @@
-"""Embedding 封装：OpenAI 兼容协议，默认硅基流动 BGE-M3（1024 维）。"""
+"""Embedding 封装：OpenAI 兼容协议，多厂牌支持。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,11 @@ from openai import (
 )
 
 from app.config import Settings
+from app.knowledge.embed_providers import (
+    resolve_embedding_api_key,
+    resolve_embedding_base_url,
+    resolve_embedding_model,
+)
 
 logger = logging.getLogger("app.knowledge")
 
@@ -39,8 +44,8 @@ class Embedder:
         """延迟创建 OpenAI 客户端（仅首次调用 _embed_batch 时）。"""
         if self._client is None:
             self._client = OpenAI(
-                api_key=self._settings.embedding_api_key,
-                base_url=self._settings.embedding_base_url,
+                api_key=resolve_embedding_api_key(self._settings),
+                base_url=resolve_embedding_base_url(self._settings),
             )
         return self._client
 
@@ -63,7 +68,7 @@ class Embedder:
         for attempt in range(max_attempts):
             try:
                 response = self._get_client().embeddings.create(
-                    model=self._settings.embedding_model,
+                    model=resolve_embedding_model(self._settings),
                     input=batch,
                 )
             except _RETRYABLE_ERRORS as exc:

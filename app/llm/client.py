@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.config import DEPRECATED_MODELS, Settings
 from app.llm.errors import LLMRetryExhausted
+from app.llm.providers import resolve_api_key, resolve_base_url, resolve_model
 
 logger = logging.getLogger("app.llm")
 
@@ -43,8 +44,8 @@ class LLMClient:
     def __init__(self, settings: Settings, client: OpenAI | None = None) -> None:
         self._settings = settings
         self._client = client or OpenAI(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.llm_base_url,
+            api_key=resolve_api_key(settings),
+            base_url=resolve_base_url(settings),
         )
 
     def complete_json(
@@ -61,12 +62,12 @@ class LLMClient:
         全部失败抛 LLMRetryExhausted。
         """
 
-        model_name = model or self._settings.llm_model
+        model_name = model or resolve_model(self._settings)
         # 铁律：旧模型名禁令必须覆盖每一个模型名入口，不能只在 Settings 构造处拦截
         if model_name in DEPRECATED_MODELS:
             raise ValueError(
                 f"模型名 {model_name!r} 已废弃，禁止使用；"
-                f"请使用 {self._settings.llm_model!r}。"
+                f"请使用 'deepseek-v4-pro'。"
             )
         # response_format 被强制为 JSON mode；调用方显式传入会得到晦涩的
         # "duplicate keyword argument" TypeError，不如在这里明确拒绝。

@@ -1,8 +1,8 @@
-"""SQLite 后端测试（B 部分）：SQLiteDrugRepository / SQLiteVectorRetriever /
+"""SQLite 后端测试：SQLiteDrugRepository / KeywordRetriever /
 SQLiteUserMedboxRepository 三件套契约。
 
 全部用 :memory:（或 tmp_path 文件）离线运行，不打网络、不连 Supabase。
-向量检索用 sqlite-vec 的 vec0 虚拟表 + 手工构造的稀疏向量验证 cosine 排序。
+检索走关键词精确匹配，无 embedding 依赖。
 """
 
 import logging
@@ -12,28 +12,11 @@ import pytest
 from app.knowledge.schemas import DrugRecord, Ingredient
 from app.knowledge.sqlite_repo import SQLiteDrugRepository
 from app.medbox.sqlite_medbox_repo import SQLiteUserMedboxRepository
-from app.rag.sqlite_retriever import SQLiteVectorRetriever
-
-DIMS = 1024
+from app.rag.keyword_retriever import KeywordRetriever
 
 
-def _one_hot(index: int) -> list[float]:
-    v = [0.0] * DIMS
-    v[index] = 1.0
-    return v
-
-
-class FixedEmbedder:
-    """查询向量化替身：恒定返回预设向量，不联网。fail=True 模拟 API 故障。"""
-
-    def __init__(self, vector: list[float], fail: bool = False):
-        self._vector = vector
-        self.fail = fail
-
-    def embed(self, texts):
-        if self.fail:
-            raise RuntimeError("embedding api down")
-        return [list(self._vector) for _ in texts]
+# dummy embedding — ChunkRow 类型第 3 位（SQLite 路径忽略，仅为类型兼容）
+_NO_EMBEDDING: list[float] = []
 
 
 def _record(brand: str, *ings) -> DrugRecord:
@@ -82,8 +65,8 @@ class TestSQLiteDrugRepository:
     def test_save_drug_writes_chunks_and_is_idempotent(self):
         repo = SQLiteDrugRepository(":memory:")
         chunks = [
-            ("用法用量", "口服一次1片", _one_hot(0)),
-            ("禁忌", "对本品过敏者禁用", _one_hot(1)),
+            ("用法用量", "口服一次1片", _NO_EMBEDDING),
+            ("禁忌", "对本品过敏者禁用", _NO_EMBEDDING),
         ]
         repo.save_drug(_record("泰诺", ("对乙酰氨基酚", 325)), chunks)
         assert repo.count_chunks() == 2
@@ -92,19 +75,18 @@ class TestSQLiteDrugRepository:
         assert repo.count_chunks() == 2
         assert repo.count_drugs() == 1
 
-    def test_replace_chunks_updates_vec_table_in_sync(self):
-        """replace_chunks 同步重写 insert_chunks 与 vec_chunks（行数一致）。"""
+    def test_replace_chunks_is_idempotent(self):
+        """replace_chunks 先删后插保证幂等。"""
         repo = SQLiteDrugRepository(":memory:")
         drug_id = repo.upsert_drug(_record("泰诺", ("对乙酰氨基酚", 325)))
-        repo.replace_chunks(drug_id, [("用法用量", "口服", _one_hot(0))])
-        assert repo._count_vec_chunks() == 1
-        # 替换为 2 条 → vec 表也变 2 条（旧向量被清掉）
+        repo.replace_chunks(drug_id, [("用法用量", "口服", _NO_EMBEDDING)])
+        assert repo.count_chunks() == 1
+        # 替换为 2 条
         repo.replace_chunks(
             drug_id,
-            [("用法用量", "口服", _one_hot(0)), ("禁忌", "禁用", _one_hot(1))],
+            [("用法用量", "口服", _NO_EMBEDDING), ("禁忌", "禁用", _NO_EMBEDDING)],
         )
         assert repo.count_chunks() == 2
-        assert repo._count_vec_chunks() == 2
 
     def test_wal_and_foreign_keys_enabled_on_file(self, tmp_path):
         """铁律：WAL 模式必须开启 + foreign_keys=ON（:memory: 不支持 WAL，用文件验证）。"""
@@ -116,73 +98,65 @@ class TestSQLiteDrugRepository:
         assert fk == 1
 
 
-# ── 2. SQLiteVectorRetriever 检索 ────────────────────────────────────────
+# ── 2. KeywordRetriever 检索 ────────────────────────────────────────────
 def _seed_two_drugs() -> SQLiteDrugRepository:
-    """泰诺 chunk 向量=[1,0,..]，芬必得 chunk 向量=[0,1,..]，共享一个 :memory: 连接。"""
+    """泰诺 + 芬必得各一条 chunk，共享 :memory: 连接。"""
     repo = SQLiteDrugRepository(":memory:")
     tainuo = repo.upsert_drug(_record("泰诺", ("对乙酰氨基酚", 325)))
-    repo.replace_chunks(tainuo, [("用法用量", "口服。成人一次1-2片，一日3次。", _one_hot(0))])
+    repo.replace_chunks(tainuo, [("用法用量", "口服。成人一次1-2片，一日3次。", _NO_EMBEDDING)])
     fenbide = repo.upsert_drug(_record("芬必得", ("布洛芬", 300)))
-    repo.replace_chunks(fenbide, [("禁忌", "对布洛芬过敏者禁用。", _one_hot(1))])
+    repo.replace_chunks(fenbide, [("禁忌", "对布洛芬过敏者禁用。", _NO_EMBEDDING)])
     return repo
 
 
-class TestSQLiteVectorRetriever:
-    def test_knn_orders_by_cosine_proximity(self):
+class TestKeywordRetriever:
+    def test_exact_brand_name_match(self):
+        """搜"泰诺"精确命中品牌名，返回该药所有 chunk。"""
         repo = _seed_two_drugs()
-        # 查询向量=[1,0,..] → 与泰诺 chunk 完全同向（cosine 距离 0），应排第一
-        retriever = SQLiteVectorRetriever(
-            FixedEmbedder(_one_hot(0)), connection=repo.connection
-        )
-        citations = retriever.search("布洛芬怎么吃")
-        assert [c.brand_name for c in citations] == ["泰诺", "芬必得"]
+        retriever = KeywordRetriever(connection=repo.connection)
+        citations = retriever.search("泰诺")
+        assert [c.brand_name for c in citations] == ["泰诺"]
         assert citations[0].section == "用法用量"
 
-    def test_excerpt_is_first_200_chars_and_exact_substring(self):
+    def test_like_brand_name_match(self):
+        """搜"芬"模糊命中"芬必得"。"""
+        repo = _seed_two_drugs()
+        retriever = KeywordRetriever(connection=repo.connection)
+        citations = retriever.search("芬")
+        assert citations[0].brand_name == "芬必得"
+
+    def test_content_fallback(self):
+        """无品牌名匹配时降级到内容搜索。"""
+        repo = _seed_two_drugs()
+        retriever = KeywordRetriever(connection=repo.connection)
+        citations = retriever.search("布洛芬过敏")
+        assert len(citations) > 0
+        assert any("布洛芬" in c.excerpt for c in citations)
+
+    def test_empty_query_returns_empty(self):
+        retriever = KeywordRetriever(connection=SQLiteDrugRepository(":memory:").connection)
+        assert retriever.search("   ") == []
+
+    def test_empty_db_returns_empty(self):
         repo = SQLiteDrugRepository(":memory:")
-        drug_id = repo.upsert_drug(_record("泰诺", ("对乙酰氨基酚", 325)))
-        content = "长" * 300
-        repo.replace_chunks(drug_id, [("注意事项", content, _one_hot(0))])
-        retriever = SQLiteVectorRetriever(
-            FixedEmbedder(_one_hot(0)), connection=repo.connection
-        )
-        (citation,) = retriever.search("q")
-        assert citation.excerpt == content[:200]
-        assert citation.excerpt in content
+        retriever = KeywordRetriever(connection=repo.connection)
+        assert retriever.search("泰诺") == []
 
     def test_limit_is_respected(self):
-        repo = _seed_two_drugs()
-        retriever = SQLiteVectorRetriever(
-            FixedEmbedder(_one_hot(0)), connection=repo.connection
-        )
-        assert len(retriever.search("q", limit=1)) == 1
-
-    def test_empty_db_returns_empty_list(self):
+        """limit 仅在 content fallback 路径生效。"""
         repo = SQLiteDrugRepository(":memory:")
-        retriever = SQLiteVectorRetriever(
-            FixedEmbedder(_one_hot(0)), connection=repo.connection
-        )
-        assert retriever.search("q") == []
+        for i in range(5):
+            drug_id = repo.upsert_drug(_record(f"药{i}", ("X", 1)))
+            repo.replace_chunks(drug_id, [("注意事项", f"内容{i}", _NO_EMBEDDING)])
+        retriever = KeywordRetriever(connection=repo.connection)
+        assert len(retriever.search("内容", limit=2)) == 2
 
-    def test_embedder_failure_degrades_to_empty(self, caplog):
-        repo = _seed_two_drugs()
-        retriever = SQLiteVectorRetriever(
-            FixedEmbedder(_one_hot(0), fail=True), connection=repo.connection
-        )
-        with caplog.at_level(logging.WARNING, logger="app.rag"):
-            assert retriever.search("q") == []
-        assert any("向量化" in r.message for r in caplog.records)
-
-    def test_query_failure_degrades_to_empty(self, caplog):
-        """损坏的连接 → 降级空引用 + warning，不炸 /chat（与 PgVector 一致）。"""
+    def test_search_failure_degrades_to_empty(self, caplog):
+        """损坏的连接 → 降级空引用，不炸 /chat。"""
         repo = SQLiteDrugRepository(":memory:")
-        repo.connection.close()  # 关掉连接制造查询失败
-        retriever = SQLiteVectorRetriever(
-            FixedEmbedder(_one_hot(0)), connection=repo.connection
-        )
-        with caplog.at_level(logging.WARNING, logger="app.rag"):
-            assert retriever.search("q") == []
-        assert any("降级" in r.message for r in caplog.records)
+        repo.connection.close()
+        retriever = KeywordRetriever(connection=repo.connection)
+        assert retriever.search("泰诺") == []
 
 
 # ── 3. SQLiteUserMedboxRepository 契约 ───────────────────────────────────

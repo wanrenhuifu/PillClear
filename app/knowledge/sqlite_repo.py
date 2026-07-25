@@ -1,10 +1,8 @@
-"""SQLite 版药品仓储（B 部分）+ 共享 schema / 连接管理。
+"""SQLite 版药品仓储 + 共享 schema / 连接管理。
 
 与 PostgresDrugRepository 实现同一个 DrugRepository Protocol，二者并存：
 - Postgres 用 pgvector 的 vector(1024) 列存向量；
-- SQLite 用 sqlite-vec 的 vec0 虚拟表（vec_chunks）存向量，rowid 与
-  insert_chunks.id 一一对应，replace_chunks 内两表同步重写——ingest.py
-  完全不感知后端差异（仍只调 save_drug/replace_chunks）。
+- SQLite 不再依赖向量检索——改用关键词精确匹配（app/rag/keyword_retriever.py）。
 
 铁律落实：
 - ingredients_verified 写入强制 0（与 Postgres/InMemory 一致）；
@@ -21,14 +19,10 @@ from typing import Any, Iterator
 
 from app.knowledge.schemas import DrugRecord
 
-# 一条 chunk：(section, content, embedding)
+# 一条 chunk：(section, content)。嵌入存于第 3 位（Postgres 兼容），SQLite 忽略。
 ChunkRow = tuple[str, str, list[float]]
 
-# vec0 向量维度，与 embedding_dims 默认值 / pgvector vector(1024) 对齐。
-_VECTOR_DIMS = 1024
-
 # 全部表由本模块统一创建（SQLite 端不需要 migration 文件）。
-# vec_chunks 用 cosine 距离，与 PgVectorRetriever 的 <=> 余弦近邻口径一致。
 _SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     create table if not exists drugs (
@@ -69,33 +63,23 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         unique(user_id, drug_id)
     )
     """,
-    f"""
-    create virtual table if not exists vec_chunks using vec0(
-        embedding float[{_VECTOR_DIMS}] distance_metric=cosine
-    )
-    """,
 )
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """在当前连接上幂等建表（含 vec0 虚拟表，需已加载 sqlite-vec）。"""
+    """在当前连接上幂等建表（纯 SQLite，无扩展依赖）。"""
     for stmt in _SCHEMA_STATEMENTS:
         conn.execute(stmt)
 
 
 def open_sqlite(db_path: str, *, foreign_keys: bool = True) -> sqlite3.Connection:
-    """打开 SQLite 连接：加载 sqlite-vec、开 WAL、按需开 foreign_keys、建表。
+    """打开 SQLite 连接：开 WAL、按需开 foreign_keys、建表。
 
     isolation_level=None（autocommit）：单语句自动提交，多语句事务由调用方
     显式 BEGIN IMMEDIATE / COMMIT 管理（见 SQLiteDrugRepository.save_drug）。
     """
-    import sqlite_vec  # noqa: PLC0415  延迟导入，未安装不影响其余模块
-
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.isolation_level = None
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
     # WAL：读写并发（:memory: 自动回落 memory，不报错）。
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(f"PRAGMA foreign_keys={'ON' if foreign_keys else 'OFF'}")
@@ -162,26 +146,12 @@ class SQLiteDrugRepository:
         return cur.fetchone()[0]
 
     def _replace_chunks(self, drug_id: int, chunks: list[ChunkRow]) -> None:
-        from sqlite_vec import serialize_float32  # noqa: PLC0415
-
-        # vec_chunks.rowid == insert_chunks.id：先删旧向量再删旧 chunk。
-        old_ids = [
-            row[0]
-            for row in self._conn.execute(
-                "select id from insert_chunks where drug_id = ?", (drug_id,)
-            ).fetchall()
-        ]
-        for chunk_id in old_ids:
-            self._conn.execute("delete from vec_chunks where rowid = ?", (chunk_id,))
+        # 先删后插：保证幂等（无需 vec_chunks 同步——检索走关键词匹配）。
         self._conn.execute("delete from insert_chunks where drug_id = ?", (drug_id,))
-        for section, content, embedding in chunks:
-            cur = self._conn.execute(
+        for section, content, _embedding in chunks:
+            self._conn.execute(
                 "insert into insert_chunks (drug_id, section, content) values (?, ?, ?)",
                 (drug_id, section, content),
-            )
-            self._conn.execute(
-                "insert into vec_chunks (rowid, embedding) values (?, ?)",
-                (cur.lastrowid, serialize_float32(embedding)),
             )
 
     # ── DrugRepository Protocol 公共方法 ─────────────────────────────
@@ -205,10 +175,6 @@ class SQLiteDrugRepository:
 
     def count_chunks(self) -> int:
         return self._conn.execute("select count(*) from insert_chunks").fetchone()[0]
-
-    def _count_vec_chunks(self) -> int:
-        """测试辅助：vec0 虚拟表行数（应与 insert_chunks 同步）。"""
-        return self._conn.execute("select count(*) from vec_chunks").fetchone()[0]
 
     def get_drug_by_brand(self, brand_name: str) -> dict[str, Any] | None:
         cur = self._conn.execute(
