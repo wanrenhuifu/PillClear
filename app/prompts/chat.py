@@ -182,7 +182,3 @@ def build_chat_messages(
         messages.extend(chat_history)
     messages.append({"role": "user", "content": query})
     return messages
-
-
-# 兼容旧代码的常量：不带 RAG 上下文的基础 system prompt
-SYSTEM_PROMPT_TEMPLATE = _SYSTEM_ROLE_AND_RULES

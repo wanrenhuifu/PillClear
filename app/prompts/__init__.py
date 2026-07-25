@@ -9,7 +9,6 @@
 """
 
 from app.prompts.chat import (
-    SYSTEM_PROMPT_TEMPLATE,
     build_chat_messages,
     build_system_prompt,
     format_citations_for_prompt,
@@ -28,7 +27,6 @@ from app.prompts.safety import (
 )
 
 __all__ = [
-    "SYSTEM_PROMPT_TEMPLATE",
     "IntentCategory",
     "IntentResult",
     "build_chat_messages",
