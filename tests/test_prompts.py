@@ -13,11 +13,13 @@ from pydantic import ValidationError
 from app.knowledge.schemas import Citation
 from app.medbox.schemas import CheckReport, IngredientTotal, OverlapResult
 from app.prompts.chat import (
+    build_chat_messages,
+    build_system_prompt,
+)
+from app.prompts.intent import (
     IntentCategory,
     IntentResult,
-    build_chat_messages,
     build_intent_messages,
-    build_system_prompt,
 )
 from app.prompts.formatters import (
     format_citations_for_prompt,

@@ -1,22 +1,15 @@
-"""聊天提示词：系统角色 + RAG 上下文注入 + 检查结论槽位。
+"""聊天提示词组装：系统角色 + RAG 上下文注入 + 检查结论槽位。
 
 铁律 #2：所有用药相关回答必须携带说明书原文引用（citations_used 非空）。
 铁律 #3/#4：能力边界与不确定原则写进 prompt，代码层再做兜底。
 
-意图分类的枚举 / 模型 / prompt 位于 app/prompts/intent.py；此处为向后兼容
-再导出（历史调用方从 app.prompts.chat 引入 IntentCategory 等）。
+静态模板文案在 app/prompts/templates/chat_system.py；
+格式化函数在 app/prompts/formatters.py；意图分类在 app/prompts/intent.py。
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-
-# 向后兼容再导出：意图分类定义已迁入 app/prompts/intent.py
-from app.prompts.intent import (  # noqa: F401
-    IntentCategory,
-    IntentResult,
-    build_intent_messages,
-)
 
 from app.prompts.formatters import format_citations_for_prompt
 from app.prompts.templates.chat_system import (
