@@ -191,5 +191,14 @@ class SQLiteDrugRepository:
         data["ingredients"] = json.loads(data["ingredients"])
         return data
 
+    def list_drugs(self) -> list[dict[str, Any]]:
+        cur = self._conn.execute(
+            "select id, brand_name, generic_name from drugs order by id"
+        )
+        return [
+            dict(zip(("id", "brand_name", "generic_name"), row))
+            for row in cur.fetchall()
+        ]
+
 
 __all__ = ["SQLiteDrugRepository", "open_sqlite", "init_schema", "ChunkRow"]

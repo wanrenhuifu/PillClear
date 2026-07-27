@@ -44,6 +44,10 @@ class DrugReader(Protocol):
         """按商品名查询药品记录。"""
         ...
 
+    def list_drugs(self) -> list[dict[str, Any]]:
+        """列出全部药品(id/brand_name/generic_name),按 id 升序。药品选择器数据源。"""
+        ...
+
 
 # 向后兼容别名：历史代码仍可用 DrugRepository 替代 DrugWriter。
 DrugRepository = DrugWriter
@@ -93,6 +97,16 @@ class InMemoryDrugRepository:
 
     def get_drug_by_brand(self, brand_name: str) -> dict[str, Any] | None:
         return self._drugs.get(brand_name)
+
+    def list_drugs(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": d["id"],
+                "brand_name": d["brand_name"],
+                "generic_name": d["generic_name"],
+            }
+            for d in sorted(self._drugs.values(), key=lambda d: d["id"])
+        ]
 
 
 class PostgresDrugRepository:
@@ -189,6 +203,14 @@ class PostgresDrugRepository:
                 return None
             cols = [desc[0] for desc in cur.description]
             return dict(zip(cols, row))
+
+    def list_drugs(self) -> list[dict[str, Any]]:
+        with self._conn.cursor() as cur:
+            cur.execute("select id, brand_name, generic_name from drugs order by id")
+            return [
+                dict(zip(("id", "brand_name", "generic_name"), row))
+                for row in cur.fetchall()
+            ]
 
 
 __all__ = [
