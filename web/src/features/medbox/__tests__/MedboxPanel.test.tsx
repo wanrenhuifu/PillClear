@@ -102,3 +102,83 @@ it("空药箱禁用检查按钮并显示空态", async () => {
   expect(screen.getByText("药箱是空的")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "开始检查" })).toBeDisabled();
 });
+
+it("检查报告出现后移除药品,报告立即清除(不残留过期结论)", async () => {
+  vi.mocked(api.getMedbox).mockResolvedValue({
+    device_id: "dev-1",
+    items: [{ drug_id: 1, brand_name: "泰诺", dosage_per_day: 3 }],
+  });
+  render(<MedboxPanel variant="rail" />, { wrapper });
+  const user = userEvent.setup();
+
+  await screen.findByText("泰诺");
+  await user.click(screen.getByRole("button", { name: "开始检查" }));
+  expect(await screen.findByText(/未发现叠加或相互作用风险/)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "移除泰诺" }));
+  await waitFor(() => expect(api.removeMedboxItem).toHaveBeenCalledWith("dev-1", 1));
+  await waitFor(() =>
+    expect(screen.queryByText(/未发现叠加或相互作用风险/)).not.toBeInTheDocument(),
+  );
+});
+
+it("检查报告出现后切换物质 chip,报告立即清除", async () => {
+  vi.mocked(api.getMedbox).mockResolvedValue({
+    device_id: "dev-1",
+    items: [{ drug_id: 1, brand_name: "泰诺", dosage_per_day: 3 }],
+  });
+  render(<MedboxPanel variant="rail" />, { wrapper });
+  const user = userEvent.setup();
+
+  await screen.findByText("泰诺");
+  await user.click(screen.getByRole("button", { name: "开始检查" }));
+  expect(await screen.findByText(/未发现叠加或相互作用风险/)).toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "酒精" }));
+  await waitFor(() =>
+    expect(screen.queryByText(/未发现叠加或相互作用风险/)).not.toBeInTheDocument(),
+  );
+});
+
+it("药箱查询失败时显示错误提示,而不是「药箱是空的」", async () => {
+  vi.mocked(api.getMedbox).mockRejectedValue(new Error("boom"));
+  render(<MedboxPanel variant="full" />, { wrapper });
+
+  expect(await screen.findByText("药箱加载失败,请刷新重试。")).toBeInTheDocument();
+  expect(screen.queryByText("药箱是空的")).not.toBeInTheDocument();
+});
+
+it("药品目录查询失败时显示错误提示,而不是空选择器", async () => {
+  vi.mocked(api.listDrugs).mockRejectedValue(new Error("boom"));
+  render(<MedboxPanel variant="full" />, { wrapper });
+
+  expect(await screen.findByText("药品目录加载失败,请刷新重试。")).toBeInTheDocument();
+  expect(screen.queryByPlaceholderText("搜索药品(商品名/通用名)")).not.toBeInTheDocument();
+});
+
+it("加入药品失败时在列表下方显示一行错误提示", async () => {
+  vi.mocked(api.addMedboxItem).mockRejectedValue(new Error("boom"));
+  render(<MedboxPanel variant="full" />, { wrapper });
+  const user = userEvent.setup();
+
+  await screen.findByText("芬必得");
+  await user.click(screen.getAllByRole("button", { name: "加入" })[0]);
+  await user.click(screen.getByRole("button", { name: "确认加入" }));
+
+  expect(await screen.findByText("操作失败,请重试。")).toBeInTheDocument();
+});
+
+it("移除药品失败时在列表下方显示一行错误提示", async () => {
+  vi.mocked(api.getMedbox).mockResolvedValue({
+    device_id: "dev-1",
+    items: [{ drug_id: 1, brand_name: "泰诺", dosage_per_day: null }],
+  });
+  vi.mocked(api.removeMedboxItem).mockRejectedValue(new Error("boom"));
+  render(<MedboxPanel variant="rail" />, { wrapper });
+  const user = userEvent.setup();
+
+  expect(await screen.findByText("泰诺")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "移除泰诺" }));
+
+  expect(await screen.findByText("操作失败,请重试。")).toBeInTheDocument();
+});

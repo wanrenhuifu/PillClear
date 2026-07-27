@@ -32,6 +32,13 @@ export function MedboxPanel({ variant }: { variant: "rail" | "full" }) {
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["medbox", deviceId] });
 
+  const checkMut = useMutation({
+    mutationFn: () => checkMedbox(medboxQ.data?.items ?? [], substances),
+  });
+
+  // 输入一变(加/减药、切换物质),旧报告立即作废——过期的「无风险」结论比没有结论更危险
+  const discardReport = () => checkMut.reset();
+
   const addMut = useMutation({
     mutationFn: ({ drug, dosage }: { drug: DrugSummary; dosage: number | null }) =>
       addMedboxItem(deviceId, {
@@ -39,21 +46,25 @@ export function MedboxPanel({ variant }: { variant: "rail" | "full" }) {
         brand_name: drug.brand_name,
         dosage_per_day: dosage,
       }),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate();
+      discardReport();
+    },
   });
 
   const removeMut = useMutation({
     mutationFn: (drugId: number) => removeMedboxItem(deviceId, drugId),
-    onSuccess: invalidate,
-  });
-
-  const checkMut = useMutation({
-    mutationFn: () => checkMedbox(medboxQ.data?.items ?? [], substances),
+    onSuccess: () => {
+      invalidate();
+      discardReport();
+    },
   });
 
   const items = medboxQ.data?.items ?? [];
-  const toggle = (s: string) =>
+  const toggle = (s: string) => {
     setSubstances((list) => (list.includes(s) ? list.filter((x) => x !== s) : [...list, s]));
+    discardReport();
+  };
 
   return (
     <div className="space-y-5">
@@ -63,6 +74,8 @@ export function MedboxPanel({ variant }: { variant: "rail" | "full" }) {
           <div className="mt-3">
             {drugsQ.isLoading ? (
               <p className="text-sm text-mute">加载药品目录…</p>
+            ) : drugsQ.isError ? (
+              <p className="text-sm text-danger">药品目录加载失败,请刷新重试。</p>
             ) : (
               <DrugPicker
                 drugs={drugsQ.data ?? []}
@@ -83,7 +96,9 @@ export function MedboxPanel({ variant }: { variant: "rail" | "full" }) {
             </Link>
           )}
         </div>
-        {items.length === 0 ? (
+        {medboxQ.isError ? (
+          <p className="mt-3 text-sm text-danger">药箱加载失败,请刷新重试。</p>
+        ) : items.length === 0 ? (
           <div className="mt-3">
             <EmptyState
               title="药箱是空的"
@@ -114,6 +129,9 @@ export function MedboxPanel({ variant }: { variant: "rail" | "full" }) {
               </li>
             ))}
           </ul>
+        )}
+        {(addMut.isError || removeMut.isError) && (
+          <p className="mt-2 text-sm text-danger">操作失败,请重试。</p>
         )}
       </section>
 

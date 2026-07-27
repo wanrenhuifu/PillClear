@@ -96,7 +96,8 @@ export function MessageBubble({ msg, onRetry }: { msg: ChatMsg; onRetry: (msg: C
           {resp.citations.map((c, i) => <CitationCard key={`${c.brand_name}-${i}`} citation={c} />)}
         </div>
       )}
-      {resp.disclaimer && (
+      {/* 后端已把免责声明追加进 answer(pipeline.py),仅当 answer 未含时才补 footer,避免重复 */}
+      {resp.disclaimer && !resp.answer?.endsWith(resp.disclaimer) && (
         <p className="border-t border-line pt-2.5 text-xs leading-relaxed text-mute">{resp.disclaimer}</p>
       )}
     </div>

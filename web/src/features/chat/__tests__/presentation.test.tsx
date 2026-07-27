@@ -77,6 +77,28 @@ describe("MessageBubble", () => {
     render(<MessageBubble msg={{ id: 2, role: "assistant", query: "q", status: "error", errorKind: "network" }} onRetry={() => {}} />);
     expect(screen.getByText("网络好像断了,检查一下再试")).toBeInTheDocument();
   });
+
+  it("后端已把免责追加进 answer 时,footer 免责不再重复渲染", () => {
+    const disclaimer = "仅供参考,不能替代医嘱。";
+    render(
+      <MessageBubble
+        msg={okMsg({ answer: `不建议同服。\n\n---\n${disclaimer}`, disclaimer })}
+        onRetry={() => {}}
+      />,
+    );
+    // 正则子串匹配:answer 段命中 1 次;若 footer 重复渲染则为 2 次
+    expect(screen.getAllByText(/仅供参考,不能替代医嘱。/).length).toBe(1);
+  });
+
+  it("answer 未包含免责声明时,footer 免责正常渲染", () => {
+    render(
+      <MessageBubble
+        msg={okMsg({ answer: "不建议同服。", disclaimer: "仅供参考,不能替代医嘱。" })}
+        onRetry={() => {}}
+      />,
+    );
+    expect(screen.getByText("仅供参考,不能替代医嘱。")).toBeInTheDocument();
+  });
 });
 
 describe("QuickStart", () => {

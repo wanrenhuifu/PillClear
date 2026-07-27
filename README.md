@@ -31,7 +31,7 @@ pip install -e ".[dev]"
 cp .env.example .env
 # 编辑 .env，填 DEEPSEEK_API_KEY（唯一必填项）
 
-pytest   # 287 个测试全部通过
+pytest   # 329 个测试全部通过
 ```
 
 ## 前端(Web)
