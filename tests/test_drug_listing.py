@@ -39,3 +39,38 @@ class TestListDrugsRepository:
     def test_empty_repo_returns_empty_list(self):
         assert InMemoryDrugRepository().list_drugs() == []
         assert SQLiteDrugRepository(":memory:").list_drugs() == []
+
+
+@pytest.fixture
+def client_inmemory() -> TestClient:
+    app = create_app()
+    app.dependency_overrides[get_drug_repository] = lambda: _seed(
+        InMemoryDrugRepository()
+    )
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_sqlite() -> TestClient:
+    app = create_app()
+    app.dependency_overrides[get_drug_repository] = lambda: _seed(
+        SQLiteDrugRepository(":memory:")
+    )
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+class TestDrugsRoute:
+    def test_shape_inmemory(self, client_inmemory):
+        resp = client_inmemory.get("/api/v1/drugs")
+        assert resp.status_code == 200
+        assert resp.json() == [
+            {"drug_id": 1, "brand_name": "泰诺", "generic_name": None},
+            {"drug_id": 2, "brand_name": "芬必得", "generic_name": None},
+        ]
+
+    def test_shape_sqlite(self, client_sqlite):
+        resp = client_sqlite.get("/api/v1/drugs")
+        assert resp.status_code == 200
+        assert [d["brand_name"] for d in resp.json()] == ["泰诺", "芬必得"]

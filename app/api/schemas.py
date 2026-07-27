@@ -44,6 +44,14 @@ class ChatResponse(BaseModel):
     )
 
 
+class DrugSummary(BaseModel):
+    """GET /api/v1/drugs 行:前端药品选择器只需 id / 商品名 / 通用名。"""
+
+    drug_id: int
+    brand_name: str
+    generic_name: str | None = None
+
+
 class LLMAnswer(BaseModel):
     """LLM JSON mode 输出的结构。"""
 
