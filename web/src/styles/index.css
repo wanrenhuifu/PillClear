@@ -1,0 +1,67 @@
+@import "@fontsource-variable/space-grotesk";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #1a2823;
+  --color-mute: #5c6b64;
+  --color-paper: #f4f7f5;
+  --color-card: #ffffff;
+  --color-line: #dce5e0;
+  --color-pharma: #0e8a6a;
+  --color-pharma-deep: #0a6b52;
+  --color-pharma-soft: #e3f1ec;
+  --color-danger: #c6362f;
+  --color-danger-soft: #fbeae9;
+  --color-warn: #b7791f;
+  --color-warn-soft: #fbf3e4;
+  --color-info: #2b6cb0;
+  --color-info-soft: #e8f0f9;
+
+  --font-display: "Space Grotesk Variable", "PingFang SC", "MiSans", "Microsoft YaHei", sans-serif;
+  --font-body: "PingFang SC", "MiSans", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-mono-data: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --animate-bubble-in: bubble-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-fade-up: fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-dot: dot 1s ease-in-out infinite;
+
+  @keyframes bubble-in {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes dot {
+    0%, 100% { transform: translateY(0); opacity: 0.45; }
+    50% { transform: translateY(-4px); opacity: 1; }
+  }
+}
+
+/* 诊疗格纸背景:顶部淡绿光晕 + 双向细网格(剂量记录纸质感) */
+@utility bg-dosage-grid {
+  background-image:
+    radial-gradient(60rem 24rem at 50% -8rem, rgb(14 138 106 / 0.08), transparent),
+    repeating-linear-gradient(0deg, rgb(26 40 35 / 0.028) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, rgb(26 40 35 / 0.028) 0 1px, transparent 1px 32px);
+}
+
+@layer base {
+  body {
+    @apply bg-paper font-body text-ink antialiased;
+  }
+  ::selection {
+    background: var(--color-pharma-soft);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
