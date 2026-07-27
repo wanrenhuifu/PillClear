@@ -34,6 +34,26 @@ cp .env.example .env
 pytest   # 287 个测试全部通过
 ```
 
+## 前端(Web)
+
+响应式 Web 应用位于 `web/`(React + Vite,独立子项目):
+
+```bash
+# 1. 先起后端(默认 8000 端口)
+uvicorn app.main:app --reload
+
+# 2. 再起前端(默认 5173 端口,/api 自动代理到后端)
+cd web
+npm install
+npm run dev
+
+# 前端测试
+cd web && npx vitest run
+```
+
+打开 http://localhost:5173 即可使用:聊天问诊 + 药箱检查。
+跨域部署时通过 `CORS_ORIGINS` 环境变量配置允许来源(逗号分隔,默认已含 Vite 开发端口)。
+
 ## 环境变量
 
 只需一个：`DEEPSEEK_API_KEY`。
