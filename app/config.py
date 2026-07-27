@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     # SQLite 数据目录："" 时按平台自动解析（见 default_data_dir）。
     data_dir: str = ""
 
+    # CORS 允许来源(逗号分隔)。空串 = 不挂 CORS 中间件。
+    # 默认放行 Vite 开发服务器;部署时按实际域名覆盖。
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     # Embedding（OpenAI 兼容，默认硅基流动 BGE-M3 1024 维）
     #
     # 厂牌标识，对应 app/knowledge/embed_providers.py 中的预置 key。
