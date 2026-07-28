@@ -114,21 +114,96 @@ def _merge_citations(retriever: Retriever, terms: list[str]) -> list[Citation]:
     return merged
 
 
-def _retrieve_citations(
-    retriever: Retriever, query: str, intent: IntentResult
-) -> list[Citation]:
-    """按意图选择 RAG 检索策略（任务三）。
+def _brand_patterns(brands: list[dict]) -> list[tuple[str, str]]:
+    """构造 (匹配模式, 存储商品名) 列表，按模式长度降序。
 
-    - drug_interaction：用提取的 drug_names 逐一检索，合并结果；
-    - lifestyle_interaction：用 drug_names + lifestyle_substances 检索；
-    - drug_info / general_health / 未提取到药名：用原始 query 检索。
+    模式 = 存储商品名本身 ＋ 去注解核名（下划线前的产品名，如
+    扶他林_外用 → 扶他林）。注解词（下划线之后）不作模式，避免
+    「外用药膏」误命中。贪心最长匹配靠此排序 + 命中置空实现。
     """
-    if intent.intent is IntentCategory.DRUG_INTERACTION and intent.drug_names:
-        return _merge_citations(retriever, intent.drug_names)
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for d in brands:
+        name = (d.get("brand_name") or "").strip()
+        if not name:
+            continue
+        aliases = [name]
+        core = name.split("_", 1)[0].strip()
+        if core and core != name and len(core) >= 2:
+            aliases.append(core)
+        for a in aliases:
+            if a not in seen:
+                seen.add(a)
+                pairs.append((a, name))
+    pairs.sort(key=lambda p: len(p[0]), reverse=True)
+    return pairs
+
+
+def _scan_brand_names(query: str, brands: list[dict]) -> list[str]:
+    """确定性扫描 query 中提及的存储商品名（无 LLM）。
+
+    在 query 的可变副本上按模式长度降序贪心匹配：命中即把该跨度置空，
+    使套在已命中长名里的短名不再二次触发（如「三九感冒灵」吃掉「感冒灵」），
+    而不重叠的多个真提及（如「泰诺和白加黑」）各自保留。返回去重保序的存储名。
+    """
+    if not query:
+        return []
+    work = query
+    found: list[str] = []
+    found_set: set[str] = set()
+    for pattern, stored in _brand_patterns(brands):
+        idx = work.find(pattern)
+        if idx >= 0:
+            work = work[:idx] + "\x00" * len(pattern) + work[idx + len(pattern) :]
+            if stored not in found_set:
+                found_set.add(stored)
+                found.append(stored)
+    return found
+
+
+def _effective_drug_names(
+    query: str, intent: IntentResult, drug_repo: DrugReader
+) -> list[str]:
+    """LLM 抽取药名 ∪ 确定性扫描药名，去重保序。
+
+    扫描是增强：list_drugs 或匹配失败一律降级为空名单，绝不阻断主流程
+    （铁律 #1 确定性优先，且与流水线「处处降级」哲学一致）。
+    """
+    try:
+        brands = drug_repo.list_drugs()
+    except Exception:  # noqa: BLE001 - 扫描是增强，失败不得阻断
+        logger.warning("品牌名扫描取列表失败，跳过扫描", exc_info=True)
+        brands = []
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in (*intent.drug_names, *_scan_brand_names(query, brands)):
+        n = (n or "").strip()
+        if n and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def _retrieve_citations(
+    retriever: Retriever,
+    query: str,
+    intent: IntentResult,
+    effective_drug_names: list[str],
+) -> list[Citation]:
+    """按「有效药名名单」选择 RAG 检索策略。
+
+    effective_drug_names = LLM 抽取 ∪ 确定性扫描。非空时按名单合并检索
+    （lifestyle 意图再并上自报物质）；完全无名单才回退整句 query 检索。
+    这把 drug_info 从「整句搜」升级为「按药名搜」，是修引用掉 0 的关键。
+    """
+    terms = list(effective_drug_names)
     if intent.intent is IntentCategory.LIFESTYLE_INTERACTION:
-        terms = [*intent.drug_names, *intent.lifestyle_substances]
-        if terms:
-            return _merge_citations(retriever, terms)
+        for s in intent.lifestyle_substances:
+            s = (s or "").strip()
+            if s and s not in terms:
+                terms.append(s)
+    if terms:
+        return _merge_citations(retriever, terms)
     return retriever.search(query)
 
 
@@ -163,8 +238,11 @@ def process_chat(
     # 2. 意图分类（任务三：失败降级 drug_info，不阻断）
     intent = _classify_intent(llm, query)
 
-    # 3. 按意图检索 RAG（铁律 #2：回答必须带引用）
-    citations = _retrieve_citations(retriever, query, intent)
+    # 2.5 确定性商品名扫描兜底：LLM 名 ∪ 扫描名（铁律 #1 确定性优先）
+    effective = _effective_drug_names(query, intent, drug_repo)
+
+    # 3. 按有效名单检索 RAG（铁律 #2：回答必须带引用）
+    citations = _retrieve_citations(retriever, query, intent, effective)
 
     # 4. 检查意图（药-药 / 药-物质相互作用）→ 确定性规则引擎检测
     check_context: str | None = None
@@ -174,9 +252,8 @@ def process_chat(
         IntentCategory.LIFESTYLE_INTERACTION,
     ):
         items = [
-            MedboxItem(drug_id=idx + 1, brand_name=name.strip())
-            for idx, name in enumerate(intent.drug_names)
-            if name.strip()
+            MedboxItem(drug_id=idx + 1, brand_name=name)
+            for idx, name in enumerate(effective)
         ]
         report = check_medbox(
             Medbox(items=items),

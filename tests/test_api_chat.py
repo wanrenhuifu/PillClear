@@ -13,8 +13,9 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.deps import get_drug_repository
+from app.api.deps import get_drug_repository, get_retriever
 from app.config import Settings
+from app.rag import NullRetriever
 from app.knowledge.repository import InMemoryDrugRepository
 from app.knowledge.schemas import DrugRecord, Ingredient
 from tests.conftest import DEEPSEEK_URL, make_completion
@@ -88,6 +89,11 @@ def app_with_test_settings(settings: Settings):
 
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: settings
+    # 检索隔离：固定 NullRetriever，使套件与开发机是否已入库无关。
+    # 否则 get_retriever 在本机会返回指向真实 %APPDATA% DB 的
+    # KeywordRetriever；新增的确定性品牌扫描会把真实品牌名注入检索，
+    # 让依赖「空引用」的用例（如 test_citations_empty_*）在本机变红。
+    app.dependency_overrides[get_retriever] = lambda: NullRetriever()
     return app
 
 
