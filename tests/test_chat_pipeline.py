@@ -239,6 +239,21 @@ class TestBrandScan:
         assert "扶他林_外用" in prompt
         assert "暂未收录" not in prompt  # 裸名没有以「查不到」形态进入检查
         assert "扶他林_外用" in ret.terms
+        assert "扶他林" not in ret.terms  # 裸名被规范映射收敛，不残留
+
+    def test_llm_named_stopped_drug_skipped(self, repo, rules):
+        """LLM 名 + 停药语境（泰诺停了）→ 否定判定对 LLM 名同样生效（与扫描一致）。
+
+        最终评审发现：并集路径此前绕过 _is_past_or_negated，停药标记只作用在扫描路径。
+        """
+        intent = IntentResult(
+            intent=IntentCategory.DRUG_INTERACTION,
+            confidence=0.9,
+            drug_names=["泰诺", "必理通"],
+        )
+        _, _, ret = _run("泰诺停了，能和必理通一起吃吗", intent, repo, rules)
+        assert "泰诺" not in ret.terms  # 列表元素相等比较，整句检索词不干扰
+        assert "必理通" in ret.terms
 
     def test_nested_brand_longest_match(self, repo, rules):
         """三九感冒灵 套住 感冒灵 → 只收最长，不二次命中。"""

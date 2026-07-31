@@ -81,8 +81,9 @@ _INTENT_MAX_TOKENS = 150
 # - 核名解析到带注解存储名（扶他林→扶他林_外用）属近似匹配，必须披露。
 # - 裸名与注解兄弟并存（扶他林 与 扶他林_外用）时，裸名降级不作模式
 #   （code review 修复），宁走整句检索也不静默查错剂型。
-# 已知盲区（无分词器不可消除，见 docs/refactor-readiness.md）：LLM 完全
-# 失手时，未收录长名内嵌已收录短名（泰诺林 里的 泰诺）仍可能误命中。
+# 已知盲区（无分词器不可消除，见 docs/refactor-readiness.md）：未收录长名内嵌
+# 已收录短名（泰诺林 里的 泰诺）仍可能误命中；T5 后扫描无条件并集，此误命中在
+# LLM 成功抽出长名时也会进入名单（缓解：长名已收录时由最左最长匹配掩蔽）。
 
 # 否定 / 停药检测（code review 后重写）：只认两类强信号——
 # ① 紧邻药名前的动词否定（汉语「动词+宾语」语序：不吃泰诺 / 停用泰诺）；
@@ -101,6 +102,7 @@ _NEGATED_POST_WINDOW = 4
 _BRAND_TERM_LIMIT = 12  # 单个药名的章节上限
 _QUERY_SEARCH_LIMIT = 5  # 整句检索单次上限
 _QUERY_SEARCH_RESERVED = 5  # 整句检索预留份额（结果永不丢弃）
+# RESERVED 必须 ≥ LIMIT，否则整句检索结果会被总量封顶截断
 _CITATIONS_MAX = 15  # 注入 prompt 的引用总量上限
 
 
@@ -206,10 +208,26 @@ def _is_past_or_negated(query: str, start: int, end: int) -> bool:
     return any(m in post for m in _NEGATED_POST_MARKERS)
 
 
+def _llm_name_negated(query: str, name: str) -> bool:
+    """LLM 药名是否在 query 的所有字面出现处都被紧邻否定/停药标记覆盖。
+
+    只要有一处未被标记 → 保留（保守：可能仍在吃，宁可多警告）。从未出现
+    在 query 里 → 无法判定 → 保留。语义与扫描路径的 _is_past_or_negated 一致。
+    """
+    found = False
+    start = query.find(name)
+    while start != -1:
+        found = True
+        if not _is_past_or_negated(query, start, start + len(name)):
+            return False
+        start = query.find(name, start + 1)
+    return found
+
+
 def _scan_brand_names(
     query: str, brands: list[dict]
 ) -> tuple[list[str], list[tuple[str, str]]]:
-    """确定性扫描 query 中提及的存储商品名（无 LLM，降级兜底专用）。
+    """无 LLM 的确定性药名扫描（T5 后无条件参与并集）。
 
     长度降序交替正则 + finditer：最左位置优先裁决，同一位置最长模式优先，
     不重叠且覆盖所有出现位置——重复出现的长名每次出现都压住内嵌短名
@@ -272,6 +290,8 @@ def _effective_drug_names(
     effective = list(scan_names)
     seen = set(scan_names)
     for name in llm_names:
+        if _llm_name_negated(query, name):
+            continue  # 与扫描一致：停药/否定语境不表示现在在吃（铁律 #1 保守方向）
         resolved = canonical.get(name, name)
         if resolved not in seen:
             seen.add(resolved)
