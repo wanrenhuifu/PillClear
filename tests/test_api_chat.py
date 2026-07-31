@@ -94,6 +94,11 @@ def app_with_test_settings(settings: Settings):
     # KeywordRetriever；新增的确定性品牌扫描会把真实品牌名注入检索，
     # 让依赖「空引用」的用例（如 test_citations_empty_*）在本机变红。
     app.dependency_overrides[get_retriever] = lambda: NullRetriever()
+    # 仓储隔离：同理——不覆盖时 get_drug_repository 在测试 Settings 下解析出
+    # 指向真实 %APPDATA%/PillClear/pillclear.db 的 SQLiteDrugRepository，
+    # pipeline 的 list_drugs 扫描会读到开发机已入库的真实品牌名（code review #8）。
+    # 裸类作覆盖函数：每请求新建空仓储；client_seeded 会再覆盖为种子仓储。
+    app.dependency_overrides[get_drug_repository] = InMemoryDrugRepository
     return app
 
 
@@ -143,6 +148,37 @@ class TestHealth:
         resp = client.get("/api/v1/health")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+
+# ── 依赖隔离（套件不得触达开发机真实 DB）────────────────────
+
+class TestDependencyIsolation:
+    def test_chat_never_resolves_dev_machine_db_path(
+        self, respx_mock, client, monkeypatch
+    ):
+        """/chat 全程不得触达开发机真实 DB 路径（code review #8）。
+
+        client fixture 必须同时覆盖 get_retriever 与 get_drug_repository；
+        否则测试 Settings 下 deps 会解析出指向 %APPDATA%/PillClear/pillclear.db
+        的 SQLite 仓储，pipeline 的 list_drugs 扫描会读到开发机已入库的真实品牌，
+        让依赖「空目录」的用例在本机变红、在干净 CI 上绿。
+        """
+        from app.api import deps
+
+        def _boom(settings):
+            raise AssertionError("触达开发机 DB 路径解析——依赖隔离失效")
+
+        monkeypatch.setattr(deps, "_resolve_db_path", _boom)
+        respx_mock.post(DEEPSEEK_URL).mock(
+            side_effect=[
+                safety_completion(),
+                intent_completion("drug_info"),
+                answer_completion("多喝水休息。", 0.9),
+            ]
+        )
+        resp = client.post("/api/v1/chat", json={"query": "感冒了怎么办"})
+        assert resp.status_code == 200
+        assert resp.json()["blocked"] is False
 
 
 # ── 安全边界拦截（关键词，不触达 LLM）─────────────────────────

@@ -37,11 +37,31 @@ def format_citations_for_prompt(citations: list[Citation]) -> str:
     return "\n".join(lines)
 
 
-def format_check_report_for_prompt(report: CheckReport) -> str:
+def _ambiguity_lines(ambiguities: list[tuple[str, str]]) -> list[str]:
+    """近似匹配披露文案（铁律 #4：核名→注解品的解析不确定，必须明说）。"""
+    lines = ["以下药品为近似匹配（用户原文与收录商品名不一致，剂型/规格未必相同）："]
+    for term, stored in ambiguities:
+        lines.append(
+            f"- 用户提到的「{term}」按收录的「{stored}」检测，"
+            "请明确提示用户核对是否为同一产品；不确定时建议咨询药师。"
+        )
+    return lines
+
+
+def format_ambiguity_note(ambiguities: list[tuple[str, str]]) -> str:
+    """非检查意图下的近似匹配披露文本（注入 check_context 槽位）。"""
+    return "\n".join(_ambiguity_lines(ambiguities))
+
+
+def format_check_report_for_prompt(
+    report: CheckReport,
+    ambiguities: list[tuple[str, str]] | None = None,
+) -> str:
     """将确定性规则引擎的 CheckReport 格式化为 prompt 上下文。
 
     铁律 #1：检查结论由规则引擎产出，LLM 只负责翻译成大白话，不得改写结论。
-    铁律 #4：unresolved_drugs 非空时必须明示「暂未收录、无法检测」，不得静默忽略。
+    铁律 #4：unresolved_drugs 非空时必须明示「暂未收录、无法检测」，不得静默忽略；
+    ambiguities（核名→注解品的近似解析）非空时必须提示用户核对剂型。
 
     返回文本供 build_system_prompt(check_context=...) 注入检查槽位；
     即使「无风险」也返回说明性文本，让 LLM 能如实转达「未检测到风险」。
@@ -55,6 +75,10 @@ def format_check_report_for_prompt(report: CheckReport) -> str:
             + "、".join(report.unresolved_drugs)
             + "。请在回答中明确告知用户这些药暂时查不到，建议咨询药师。"
         )
+
+    # 近似匹配披露（铁律 #4：核名解析到注解品不得静默）
+    if ambiguities:
+        lines.extend(_ambiguity_lines(list(ambiguities)))
 
     # 规则引擎触发的冲突规则（确定性结论，必须原样传达）
     if report.triggered_rules:

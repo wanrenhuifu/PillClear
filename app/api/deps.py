@@ -150,7 +150,11 @@ def get_user_medbox_repository(
     if entry is not None:
         return entry[1]
     if isinstance(drug_repo, SQLiteDrugRepository):
-        repo: UserMedboxRepository = SQLiteUserMedboxRepository(drug_repo.connection)
+        # 共享连接必须共享锁：两仓储在不同线程池 worker 里并发执行，
+        # 各持一把锁仍会交错使用同一连接（code review #13）。
+        repo: UserMedboxRepository = SQLiteUserMedboxRepository(
+            drug_repo.connection, lock=drug_repo.lock
+        )
     elif isinstance(drug_repo, PostgresDrugRepository):
         repo = PostgresUserMedboxRepository(settings.database_url)
     else:

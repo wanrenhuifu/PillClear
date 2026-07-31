@@ -12,6 +12,7 @@ get_items 负责把它带回来：真实仓储靠 SQL JOIN，内存替身用构�
 
 from __future__ import annotations
 
+import threading
 from typing import Protocol
 
 
@@ -93,15 +94,20 @@ class InMemoryUserMedboxRepository:
 
 
 class PostgresUserMedboxRepository:
-    """psycopg3 真实实现，连 Supabase（延迟导入，未安装不影响其余模块）。"""
+    """psycopg3 真实实现，连 Supabase（延迟导入，未安装不影响其余模块）。
+
+    自建连接 + 实例级 RLock：路由经 run_in_threadpool 并发执行，
+    psycopg3 同步连接禁止重叠操作（code review #13）。
+    """
 
     def __init__(self, dsn: str) -> None:
         import psycopg  # noqa: PLC0415
 
         self._conn = psycopg.connect(dsn, autocommit=True)
+        self._lock = threading.RLock()
 
     def get_or_create_user(self, device_id: str) -> int:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "insert into users (device_id) values (%s)"
                 " on conflict (device_id) do update set device_id = excluded.device_id"
@@ -111,7 +117,7 @@ class PostgresUserMedboxRepository:
             return cur.fetchone()[0]
 
     def get_items(self, user_id: int) -> list[dict]:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "select m.drug_id, d.brand_name, m.dosage_per_day"
                 " from user_medbox m left join drugs d on d.id = m.drug_id"
@@ -128,7 +134,7 @@ class PostgresUserMedboxRepository:
             ]
 
     def upsert_item(self, user_id: int, drug_id: int, dosage_per_day: int | None) -> None:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "insert into user_medbox (user_id, drug_id, dosage_per_day)"
                 " values (%s, %s, %s)"
@@ -138,14 +144,14 @@ class PostgresUserMedboxRepository:
             )
 
     def remove_item(self, user_id: int, drug_id: int) -> None:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "delete from user_medbox where user_id = %s and drug_id = %s",
                 (user_id, drug_id),
             )
 
     def count_items(self, user_id: int) -> int:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute("select count(*) from user_medbox where user_id = %s", (user_id,))
             return cur.fetchone()[0]
 

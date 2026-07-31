@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 
 from app.knowledge.schemas import Citation
 from app.knowledge.sqlite_repo import open_sqlite
@@ -25,6 +26,7 @@ SELECT d.brand_name, c.section, c.content
 FROM insert_chunks c
 JOIN drugs d ON d.id = c.drug_id
 WHERE d.brand_name = ?
+LIMIT ?
 """
 
 _SEARCH_BY_BRAND_LIKE = """
@@ -32,6 +34,7 @@ SELECT d.brand_name, c.section, c.content
 FROM insert_chunks c
 JOIN drugs d ON d.id = c.drug_id
 WHERE d.brand_name LIKE ?
+LIMIT ?
 """
 
 _SEARCH_BY_CONTENT = """
@@ -57,6 +60,9 @@ class KeywordRetriever:
     ) -> None:
         self._db_path = db_path
         self._conn: sqlite3.Connection | None = connection
+        # deps 缓存单实例，search 经 run_in_threadpool 并发执行；
+        # check_same_thread=False 单连接必须串行使用（含懒建连本身）。
+        self._lock = threading.RLock()
 
     def search(self, query: str, limit: int = 5) -> list[Citation]:
         term = query.strip()
@@ -70,24 +76,27 @@ class KeywordRetriever:
             return []
 
     def _search(self, term: str, limit: int) -> list[Citation]:
-        conn = self._get_conn()
+        with self._lock:
+            conn = self._get_conn()
 
-        # 1. 精确匹配品牌名
-        rows = conn.execute(_SEARCH_BY_BRAND_EXACT, (term,)).fetchall()
-        if rows:
+            # 1. 精确匹配品牌名（limit 在三级降级上一律生效，防止全章节倾倒进 prompt）
+            rows = conn.execute(_SEARCH_BY_BRAND_EXACT, (term, limit)).fetchall()
+            if rows:
+                return self._rows_to_citations(rows)
+
+            # 2. 模糊匹配品牌名（搜索词为药名子串；多药命中时同样受 limit 截断）
+            rows = conn.execute(
+                _SEARCH_BY_BRAND_LIKE, (f"%{term}%", limit)
+            ).fetchall()
+            if rows:
+                return self._rows_to_citations(rows)
+
+            # 3. 降级到章节内容搜索
+            like_term = f"%{term}%"
+            rows = conn.execute(
+                _SEARCH_BY_CONTENT, (like_term, like_term, limit)
+            ).fetchall()
             return self._rows_to_citations(rows)
-
-        # 2. 模糊匹配品牌名（搜索词为药名子串）
-        rows = conn.execute(_SEARCH_BY_BRAND_LIKE, (f"%{term}%",)).fetchall()
-        if rows:
-            return self._rows_to_citations(rows)
-
-        # 3. 降级到章节内容搜索
-        like_term = f"%{term}%"
-        rows = conn.execute(
-            _SEARCH_BY_CONTENT, (like_term, like_term, limit)
-        ).fetchall()
-        return self._rows_to_citations(rows)
 
     def _rows_to_citations(self, rows: list[tuple]) -> list[Citation]:
         return [

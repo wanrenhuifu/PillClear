@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Protocol
 
 from app.knowledge.schemas import DrugRecord
@@ -113,6 +114,10 @@ class PostgresDrugRepository:
     """psycopg3 + pgvector 的真实入库实现。
 
     延迟导入 psycopg / pgvector，未安装或未配置 DATABASE_URL 时也不影响其余模块导入。
+
+    deps 按 Settings 缓存单实例，路由经 run_in_threadpool 并发执行；
+    psycopg3 同步连接禁止重叠操作，故所有公共方法以实例级 RLock 串行化
+    （同 PgVectorRetriever 的既有模式，code review #13）。
     """
 
     def __init__(self, dsn: str) -> None:
@@ -120,6 +125,7 @@ class PostgresDrugRepository:
         from pgvector.psycopg import register_vector  # noqa: PLC0415
 
         self._conn = psycopg.connect(dsn, autocommit=True)
+        self._lock = threading.RLock()
         register_vector(self._conn)
 
     def upsert_drug(self, record: DrugRecord) -> int:
@@ -129,7 +135,7 @@ class PostgresDrugRepository:
         # 铁律：ingredients_verified 入库永不置 true，等人工核对。
         # 仓储层强制覆盖，避免新入库路径绕过。
         ingredients_verified = False
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 """
                 insert into drugs (
@@ -162,7 +168,7 @@ class PostgresDrugRepository:
             return cur.fetchone()[0]
 
     def replace_chunks(self, drug_id: int, chunks: list[ChunkRow]) -> None:
-        with self._conn.transaction():
+        with self._lock, self._conn.transaction():
             with self._conn.cursor() as cur:
                 cur.execute("delete from insert_chunks where drug_id = %s", (drug_id,))
                 if chunks:
@@ -175,23 +181,24 @@ class PostgresDrugRepository:
     def save_drug(self, record: DrugRecord, chunks: list[ChunkRow]) -> int:
         # 同一事务内 upsert + 重写 chunks：要么一起成功，要么一起回滚，
         # 杜绝"药品行已提交、chunks 写入失败"的孤儿行 / stale chunks 窗口。
-        with self._conn.transaction():
+        # RLock：内部 upsert_drug / replace_chunks 会再次取锁。
+        with self._lock, self._conn.transaction():
             drug_id = self.upsert_drug(record)
             self.replace_chunks(drug_id, chunks)
         return drug_id
 
     def count_drugs(self) -> int:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute("select count(*) from drugs")
             return cur.fetchone()[0]
 
     def count_chunks(self) -> int:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute("select count(*) from insert_chunks")
             return cur.fetchone()[0]
 
     def get_drug_by_brand(self, brand_name: str) -> dict[str, Any] | None:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "select id, brand_name, generic_name, otc_category, dosage_form,"
                 " specification, approval_number, ingredients, ingredients_verified"
@@ -205,7 +212,7 @@ class PostgresDrugRepository:
             return dict(zip(cols, row))
 
     def list_drugs(self) -> list[dict[str, Any]]:
-        with self._conn.cursor() as cur:
+        with self._lock, self._conn.cursor() as cur:
             cur.execute("select id, brand_name, generic_name from drugs order by id")
             return [
                 dict(zip(("id", "brand_name", "generic_name"), row))

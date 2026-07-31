@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -100,15 +101,27 @@ def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 class SQLiteDrugRepository:
-    """sqlite3 + sqlite-vec 的真实入库实现（本地文件 / :memory:）。"""
+    """sqlite3 + sqlite-vec 的真实入库实现（本地文件 / :memory:）。
+
+    deps 按 Settings 缓存单实例，/chat、/drugs、/medbox 经 run_in_threadpool
+    并发执行。check_same_thread=False 的单连接必须串行使用（同
+    PgVectorRetriever 的既有模式）：实例级 RLock 包裹一切公共方法；
+    共享本连接的仓储（SQLiteUserMedboxRepository）必须共享同一把锁。
+    """
 
     def __init__(self, db_path: str = ":memory:") -> None:
         self._conn = open_sqlite(db_path)
+        self._lock = threading.RLock()
 
     @property
     def connection(self) -> sqlite3.Connection:
         """暴露底层连接，供 SQLiteUserMedboxRepository 等共享同一数据库。"""
         return self._conn
+
+    @property
+    def lock(self) -> threading.RLock:
+        """连接串行化锁：共享 self.connection 的仓储必须传入同一把锁。"""
+        return self._lock
 
     # ── 内部实现（不管事务，供公共方法在事务内复用）────────────────────
     def _upsert_drug(self, record: DrugRecord) -> int:
@@ -157,48 +170,55 @@ class SQLiteDrugRepository:
     # ── DrugRepository Protocol 公共方法 ─────────────────────────────
     def upsert_drug(self, record: DrugRecord) -> int:
         # autocommit 连接：单语句自动提交。
-        return self._upsert_drug(record)
+        with self._lock:
+            return self._upsert_drug(record)
 
     def replace_chunks(self, drug_id: int, chunks: list[ChunkRow]) -> None:
-        with _transaction(self._conn):
+        with self._lock, _transaction(self._conn):
             self._replace_chunks(drug_id, chunks)
 
     def save_drug(self, record: DrugRecord, chunks: list[ChunkRow]) -> int:
         # 同一显式事务内 upsert + 重写 chunks：同成败，杜绝孤儿行 / stale chunks。
-        with _transaction(self._conn):
+        with self._lock, _transaction(self._conn):
             drug_id = self._upsert_drug(record)
             self._replace_chunks(drug_id, chunks)
         return drug_id
 
     def count_drugs(self) -> int:
-        return self._conn.execute("select count(*) from drugs").fetchone()[0]
+        with self._lock:
+            return self._conn.execute("select count(*) from drugs").fetchone()[0]
 
     def count_chunks(self) -> int:
-        return self._conn.execute("select count(*) from insert_chunks").fetchone()[0]
+        with self._lock:
+            return self._conn.execute(
+                "select count(*) from insert_chunks"
+            ).fetchone()[0]
 
     def get_drug_by_brand(self, brand_name: str) -> dict[str, Any] | None:
-        cur = self._conn.execute(
-            "select id, brand_name, generic_name, otc_category, dosage_form,"
-            " specification, approval_number, ingredients, ingredients_verified"
-            " from drugs where brand_name = ?",
-            (brand_name,),
-        )
-        row = cur.fetchone()
-        if row is None:
-            return None
-        cols = [d[0] for d in cur.description]
-        data = dict(zip(cols, row))
-        data["ingredients"] = json.loads(data["ingredients"])
-        return data
+        with self._lock:
+            cur = self._conn.execute(
+                "select id, brand_name, generic_name, otc_category, dosage_form,"
+                " specification, approval_number, ingredients, ingredients_verified"
+                " from drugs where brand_name = ?",
+                (brand_name,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            cols = [d[0] for d in cur.description]
+            data = dict(zip(cols, row))
+            data["ingredients"] = json.loads(data["ingredients"])
+            return data
 
     def list_drugs(self) -> list[dict[str, Any]]:
-        cur = self._conn.execute(
-            "select id, brand_name, generic_name from drugs order by id"
-        )
-        return [
-            dict(zip(("id", "brand_name", "generic_name"), row))
-            for row in cur.fetchall()
-        ]
+        with self._lock:
+            cur = self._conn.execute(
+                "select id, brand_name, generic_name from drugs order by id"
+            )
+            return [
+                dict(zip(("id", "brand_name", "generic_name"), row))
+                for row in cur.fetchall()
+            ]
 
 
 __all__ = ["SQLiteDrugRepository", "open_sqlite", "init_schema", "ChunkRow"]
