@@ -172,7 +172,7 @@ class TestSQLiteUserMedboxRepository:
     def test_get_items_joins_brand_name_from_shared_conn(self):
         drugs = SQLiteDrugRepository(":memory:")
         drug_id = drugs.upsert_drug(_record("泰诺", ("对乙酰氨基酚", 325)))
-        repo = SQLiteUserMedboxRepository(drugs.connection)  # 共享连接
+        repo = SQLiteUserMedboxRepository(drugs.connection, lock=drugs.lock)  # 共享连接
         uid = repo.get_or_create_user("dev")
         repo.upsert_item(uid, drug_id, 3)
         assert repo.get_items(uid) == [
@@ -182,7 +182,7 @@ class TestSQLiteUserMedboxRepository:
     def test_upsert_is_idempotent_update(self):
         drugs = SQLiteDrugRepository(":memory:")
         drug_id = drugs.upsert_drug(_record("泰诺", ("对乙酰氨基酚", 325)))
-        repo = SQLiteUserMedboxRepository(drugs.connection)
+        repo = SQLiteUserMedboxRepository(drugs.connection, lock=drugs.lock)
         uid = repo.get_or_create_user("dev")
         repo.upsert_item(uid, drug_id, 3)
         repo.upsert_item(uid, drug_id, 1)
@@ -193,7 +193,7 @@ class TestSQLiteUserMedboxRepository:
         drugs = SQLiteDrugRepository(":memory:")
         d1 = drugs.upsert_drug(_record("泰诺", ("对乙酰氨基酚", 325)))
         d2 = drugs.upsert_drug(_record("芬必得", ("布洛芬", 300)))
-        repo = SQLiteUserMedboxRepository(drugs.connection)
+        repo = SQLiteUserMedboxRepository(drugs.connection, lock=drugs.lock)
         uid = repo.get_or_create_user("dev")
         repo.upsert_item(uid, d1, 3)
         repo.upsert_item(uid, d2, 2)

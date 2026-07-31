@@ -35,11 +35,18 @@ class SQLiteUserMedboxRepository:
         lock: threading.RLock | None = None,
     ) -> None:
         if isinstance(db_path_or_connection, sqlite3.Connection):
+            if lock is None:
+                raise ValueError(
+                    "共享 sqlite3.Connection 必须同时传入共享 lock"
+                    "（同连接的两把锁会交错撕裂事务，见 code review #13）"
+                )
             self._conn = db_path_or_connection
         else:
             # 独立连接：FK 关闭，药箱仓储可独立于药品库使用（见模块头注）。
             self._conn = open_sqlite(db_path_or_connection, foreign_keys=False)
-        self._lock = lock if lock is not None else threading.RLock()
+            if lock is None:
+                lock = threading.RLock()
+        self._lock = lock
 
     def get_or_create_user(self, device_id: str) -> int:
         with self._lock:

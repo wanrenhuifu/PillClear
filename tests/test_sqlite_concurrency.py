@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from app.knowledge.schemas import DrugRecord, Ingredient
 from app.knowledge.sqlite_repo import SQLiteDrugRepository
 from app.medbox.sqlite_medbox_repo import SQLiteUserMedboxRepository
@@ -24,6 +26,13 @@ def _drug(i: int) -> DrugRecord:
         brand_name=f"药品{i % 5}",
         ingredients=[Ingredient(name="对乙酰氨基酚", amount=100, unit="mg")],
     )
+
+
+def test_shared_connection_without_lock_raises():
+    """共享连接必须显式传共享锁：静默自建私有锁会复刻两锁一连接交错（code review #13 回归）。"""
+    repo = SQLiteDrugRepository(":memory:")
+    with pytest.raises(ValueError, match="共享.*锁"):
+        SQLiteUserMedboxRepository(repo.connection)
 
 
 def test_shared_connection_concurrent_reads_and_writes():
