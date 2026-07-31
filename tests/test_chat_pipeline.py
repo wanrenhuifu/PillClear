@@ -551,3 +551,38 @@ class TestRetrievalAndFindings:
             answer_citations=[],
         )
         assert "查阅原药品说明书" not in result.answer
+
+    def test_citation_budget_fair_across_drugs(self, repo, rules):
+        """多药查询每药都有引用份额（不再第一个药吃满、后面的饿死）。"""
+        intent = IntentResult(
+            intent=IntentCategory.DRUG_INTERACTION,
+            confidence=0.9,
+            drug_names=["泰诺", "必理通"],
+        )
+        result, _, ret = _run(
+            "泰诺和必理通能一起吃吗",
+            intent,
+            repo,
+            rules,
+            # 每药恰好 per_drug(2 药 = 5) 条，避开 FakeRetriever 无视 limit 的过填充
+            # 场景（单个药名返回 >drug_pool 会把 merged 顶破、提前 break 饿死第 2 药）。
+            canned={"泰诺": _cites("泰诺", 5), "必理通": _cites("必理通", 5)},
+        )
+        by_brand = {c.brand_name for c in result.citations}
+        assert "泰诺" in by_brand and "必理通" in by_brand
+        assert len(result.citations) <= 15
+
+    def test_search_stops_when_budget_filled(self, repo, rules):
+        """预算满后不再发起多余检索（修发现 14 的浪费 I/O）。"""
+        intent = IntentResult(
+            intent=IntentCategory.DRUG_INFO, confidence=0.9, drug_names=["泰诺"]
+        )
+        _, _, ret = _run(
+            "泰诺一天最多吃几次",
+            intent,
+            repo,
+            rules,
+            canned={"泰诺": _cites("泰诺", 20)},
+        )
+        # 药名检索把预算填满 → 整句检索不再发起（FakeRetriever 无视 limit 的过填充场景）
+        assert ret.terms == ["泰诺"]

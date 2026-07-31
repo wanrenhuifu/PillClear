@@ -97,8 +97,9 @@ _NEGATED_POST_MARKERS = (
 _NEGATED_POST_WINDOW = 4
 
 # ── 检索预算（端到端 < 1s 设计目标：prompt 体量必须封顶）────────
-_BRAND_TERM_LIMIT = 12  # 按药名检索时每个药名的章节上限（单份说明书典型 10-14 章）
-_QUERY_SEARCH_LIMIT = 5  # 整句检索上限（沿用原内容搜索语义）
+_BRAND_TERM_LIMIT = 12  # 单个药名的章节上限
+_QUERY_SEARCH_LIMIT = 5  # 整句检索单次上限
+_QUERY_SEARCH_RESERVED = 5  # 整句检索预留份额（结果永不丢弃）
 _CITATIONS_MAX = 15  # 注入 prompt 的引用总量上限
 
 
@@ -283,15 +284,24 @@ def _retrieve_citations(
     intent: IntentResult,
     effective_drug_names: list[str],
 ) -> list[Citation]:
-    """按名检索 ∪ 整句检索，去重合并、总量封顶。
+    """按名检索 ∪ 整句检索，去重合并、总量封顶、每药公平。
 
-    按名检索修「引用掉 0」（整句搜经常 miss 药名）；整句检索始终参与：
-    保住非品牌词（症状 / 用法）的召回，且 Postgres/pgvector 部署下让完整
-    问题进入语义排序。总量封顶压低 prompt token 与延迟（< 1s 设计目标）。
+    预算分配（code review 修复）：先给整句检索预留 _QUERY_SEARCH_RESERVED
+    份额（结果永不丢弃），剩余 drug_pool 在药名间均分，每药至少 1 条——多药
+    查询不再第一个药吃满、后面的药 0 引用。总量满即停止后续检索（不再浪费
+    SQL 往返 / pgvector embedding）。
+
+    整句检索始终参与：只要预算还有空间就发起（保住非品牌词召回与 pgvector
+    语义路径）；药名检索在 FakeRetriever 这类无视 limit 的实现下把预算填满时
+    才跳过（避免纯浪费）。
     """
     terms = list(effective_drug_names)
     if intent.intent is IntentCategory.LIFESTYLE_INTERACTION:
         terms = _dedup_stripped((*terms, *intent.lifestyle_substances))
+    drug_pool = _CITATIONS_MAX - _QUERY_SEARCH_RESERVED
+    per_drug = (
+        max(1, min(_BRAND_TERM_LIMIT, drug_pool // len(terms))) if terms else 0
+    )
     merged: list[Citation] = []
     seen: set[tuple[str, str, str]] = set()
 
@@ -305,8 +315,11 @@ def _retrieve_citations(
                 merged.append(c)
 
     for term in terms:
-        add(retriever.search(term, limit=_BRAND_TERM_LIMIT))
-    add(retriever.search(query, limit=_QUERY_SEARCH_LIMIT))
+        if len(merged) >= drug_pool:
+            break
+        add(retriever.search(term, limit=per_drug))
+    if len(merged) < _CITATIONS_MAX:
+        add(retriever.search(query, limit=_QUERY_SEARCH_LIMIT))
     return merged
 
 
