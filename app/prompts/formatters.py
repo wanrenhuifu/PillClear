@@ -49,55 +49,37 @@ def _ambiguity_lines(ambiguities: list[tuple[str, str]]) -> list[str]:
 
 
 def format_ambiguity_note(ambiguities: list[tuple[str, str]]) -> str:
-    """非检查意图下的近似匹配披露文本（注入 check_context 槽位）。"""
+    """近似匹配披露文本（铁律 #4：核名→注解品的解析不确定，必须明说）。
+
+    由调用方注入独立 ambiguity_note 提示槽位（中立标题，无「确定性」头），
+    不混入确定性检查结论（code review 修复：启发式披露不得冒充规则引擎结论）。
+    """
     return "\n".join(_ambiguity_lines(ambiguities))
 
 
-def format_check_report_for_prompt(
-    report: CheckReport,
-    ambiguities: list[tuple[str, str]] | None = None,
-) -> str:
-    """将确定性规则引擎的 CheckReport 格式化为 prompt 上下文。
+def format_check_report_for_prompt(report: CheckReport) -> str:
+    """把 CheckReport 渲染为系统提示内的检查结论（确定性内容，铁律 #1）。
 
-    铁律 #1：检查结论由规则引擎产出，LLM 只负责翻译成大白话，不得改写结论。
-    铁律 #4：unresolved_drugs 非空时必须明示「暂未收录、无法检测」，不得静默忽略；
-    ambiguities（核名→注解品的近似解析）非空时必须提示用户核对剂型。
-
-    返回文本供 build_system_prompt(check_context=...) 注入检查槽位；
-    即使「无风险」也返回说明性文本，让 LLM 能如实转达「未检测到风险」。
+    只含确定性结论（触发规则 / 叠加警告 / 共享成分 / 未收录）；近似匹配披露
+    由调用方经 format_ambiguity_note 走独立提示槽位，不混入本段
+    （code review 修复：启发式披露不得冒充规则引擎结论）。
     """
     lines: list[str] = []
-
-    # 未收录药品：最高优先明示（铁律 #4）
     if report.unresolved_drugs:
         lines.append(
             "以下药品暂未收录，无法检测其成分与相互作用："
             + "、".join(report.unresolved_drugs)
             + "。请在回答中明确告知用户这些药暂时查不到，建议咨询药师。"
         )
-
-    # 近似匹配披露（铁律 #4：核名解析到注解品不得静默）
-    if ambiguities:
-        lines.extend(_ambiguity_lines(list(ambiguities)))
-
-    # 规则引擎触发的冲突规则（确定性结论，必须原样传达）
     if report.triggered_rules:
         lines.append("规则引擎检测到以下风险（确定性结论，必须原样传达，不得否定或改写）：")
         for rule in report.triggered_rules:
             lines.append(f"- 【{rule.severity}｜{rule.title}】{rule.warning}")
-
-    # 成分叠加超限警告（纯代码计算结果，铁律 #1）
     if report.overlap.warnings:
         lines.append("成分叠加超限警告（代码计算，必须传达）：")
         for warning in report.overlap.warnings:
             lines.append(f"- {warning}")
-
-    # 共享成分信息（帮助 LLM 说明「哪几种药共享什么成分」）
-    shared = [
-        t
-        for t in report.overlap.overlapping
-        if len(t.sources) >= 2
-    ]
+    shared = [t for t in report.overlap.overlapping if len(t.sources) >= 2]
     if shared:
         lines.append("被多种药品共享的成分（叠加来源）：")
         for t in shared:
@@ -105,8 +87,21 @@ def format_check_report_for_prompt(
                 f"- {t.name}：来自 {'、'.join(t.sources)}，"
                 f"每日合计约 {t.total_amount_mg}mg"
             )
-
     if not lines:
         return "规则引擎未检测到成分叠加或已知相互作用。请如实告知用户目前未检测到风险，但仍提醒按说明书用量服用。"
-
     return "\n".join(lines)
+
+
+def report_has_findings(report: CheckReport) -> bool:
+    """format_check_report_for_prompt 是否渲染了确定性结论段（单一事实来源）。
+
+    pipeline 的 has_findings 必须调用本函数，禁止在别处复制渲染条件
+    （code review 修复：布尔镜像会随 formatter 加分支静默漂移）。
+    近似匹配（ambiguities）不算发现——它只是核名提示，不压制无引用注记（铁律 #2）。
+    """
+    return bool(
+        report.triggered_rules
+        or report.overlap.warnings
+        or report.unresolved_drugs
+        or any(len(t.sources) >= 2 for t in report.overlap.overlapping)
+    )

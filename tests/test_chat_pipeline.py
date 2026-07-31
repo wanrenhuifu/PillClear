@@ -478,8 +478,8 @@ class TestScanHardening:
         assert "近似匹配" in prompt
         assert "扶他林_外用" in prompt
         assert "核对" in prompt
-        # 近似匹配披露本身就是确定性发现 → 抑制「查阅说明书」注记
-        assert "查阅原药品说明书" not in result.answer
+        # 近似匹配是披露不是发现（code review 修复）：零引用时无引用注记必须追加（铁律 #2）
+        assert "查阅原药品说明书" in result.answer
 
 
 # ── 检索策略与 has_findings（code review #4/#7/#14）──────────

@@ -32,6 +32,10 @@ _SYSTEM_ROLE_AND_RULES = (
 # RAG 上下文章节标题（接在 _SYSTEM_ROLE_AND_RULES 与引用文本块之间）
 RAG_SECTION_HEADER = "\n\n## 参考说明书原文（回答必须基于以下内容）\n\n"
 
+# 近似匹配提示槽位标题（接在引用文本块与 check_context 之间；中立标题，
+# 无「确定性」头——它只是核名披露（铁律 #4），不是规则引擎结论）
+AMBIGUITY_SECTION_HEADER = "\n\n## 需要向用户确认的近似匹配\n\n"
+
 # 检查结论槽位标题（接在引用文本块与 check_context 之间）
 CHECK_SECTION_HEADER = "\n\n## 检查结果（来自确定性规则引擎）\n\n"
 

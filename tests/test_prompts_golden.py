@@ -121,6 +121,29 @@ class TestSystemPromptGolden:
             build_system_prompt(_citations(), check_context=check_context),
         )
 
+    def test_ambiguity_note_section(self):
+        """近似匹配提示走独立中立槽位：RAG 之后、检查结论之前，无「确定性」头。"""
+        from app.prompts.chat import build_system_prompt
+        from app.prompts.formatters import format_ambiguity_note
+
+        prompt = build_system_prompt(
+            _citations(),
+            ambiguity_note=format_ambiguity_note([("扶他林", "扶他林_外用")]),
+        )
+        _assert_golden("chat_system_with_ambiguity_note.txt", prompt)
+
+    def test_check_and_ambiguity_order(self):
+        """check + ambiguity_note 同时存在时的完整组装顺序：RAG → 近似匹配 → 检查结论。"""
+        from app.prompts.chat import build_system_prompt
+        from app.prompts.formatters import format_ambiguity_note, format_check_report_for_prompt
+
+        prompt = build_system_prompt(
+            _citations(),
+            check_context=format_check_report_for_prompt(_combo_report()),
+            ambiguity_note=format_ambiguity_note([("扶他林", "扶他林_外用")]),
+        )
+        _assert_golden("chat_system_with_check_and_ambiguity.txt", prompt)
+
 
 # ── 分类器 prompt（意图 / 安全 / 入库抽取）────────────────────
 
@@ -200,25 +223,3 @@ class TestCheckReportFormatGolden:
     def test_combo_rendering_order(self):
         # 四段信号齐全时的渲染顺序：未收录 → 触发规则 → 叠加警告 → 共享成分
         _assert_golden("report_combo.txt", format_check_report_for_prompt(_combo_report()))
-
-    def test_ambiguous_matches(self):
-        # 「近似匹配披露」分支（核名→注解品，铁律 #4 不得静默）
-        report = CheckReport(overlap=OverlapResult())
-        _assert_golden(
-            "report_ambiguous.txt",
-            format_check_report_for_prompt(
-                report, ambiguities=[("扶他林", "扶他林_外用")]
-            ),
-        )
-
-    def test_ambiguity_note_matches_report_block(self):
-        # 非检查意图用的独立披露文本必须与检查报告内的同段文案逐字一致
-        from app.prompts.formatters import format_ambiguity_note
-
-        ambiguities = [("扶他林", "扶他林_外用")]
-        note = format_ambiguity_note(ambiguities)
-        report_text = format_check_report_for_prompt(
-            CheckReport(overlap=OverlapResult()), ambiguities=ambiguities
-        )
-        assert note == report_text
-        assert "近似匹配" in note and "核对" in note

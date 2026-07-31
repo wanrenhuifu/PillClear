@@ -16,8 +16,8 @@
 
 ## 防护网组成
 
-1. **prompt golden 逐字比对** — `tests/test_prompts_golden.py` + `tests/golden/`（15 个黄金文件）
-   - 覆盖：`build_system_prompt`（无引用 / 有引用 / 带检查槽位）、intent / safety / ingest 三份分类器模板、citations 格式化两种形态、`format_check_report_for_prompt` 全七分支（含「无风险」「共享成分」「近似匹配披露」分支、组合报告的渲染顺序）
+1. **prompt golden 逐字比对** — `tests/test_prompts_golden.py` + `tests/golden/`（16 个黄金文件）
+   - 覆盖：`build_system_prompt`（无引用 / 有引用 / 带检查槽位 / 带近似匹配槽位 / 检查+近似匹配组合顺序）、intent / safety / ingest 三份分类器模板、citations 格式化两种形态、`format_check_report_for_prompt` 确定性五段渲染（无风险 / 未收录 / 触发规则 / 叠加警告 / 共享成分 / 组合报告顺序）；近似匹配披露走独立中立槽位（`AMBIGUITY_SECTION_HEADER`），不再混入「确定性规则引擎」检查结论（code review 修复：启发式披露不得伪装成确定性结论）
    - 重新生成（仅在确认文案变更为有意之后）：
      `PILLCLEAR_REGEN_GOLDEN=1 python -m pytest tests/test_prompts_golden.py`
      PowerShell：`$env:PILLCLEAR_REGEN_GOLDEN=1; python -m pytest tests/test_prompts_golden.py; Remove-Item env:PILLCLEAR_REGEN_GOLDEN`

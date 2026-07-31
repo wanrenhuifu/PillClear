@@ -32,6 +32,7 @@ from app.prompts.chat import build_chat_messages
 from app.prompts.formatters import (
     format_ambiguity_note,
     format_check_report_for_prompt,
+    report_has_findings,
 )
 from app.prompts.intent import (
     IntentCategory,
@@ -362,6 +363,7 @@ def process_chat(
 
     # 4. 检查意图（药-药 / 药-物质相互作用）→ 确定性规则引擎检测
     check_context: str | None = None
+    ambiguity_note: str | None = None
     has_findings = False
     if intent.intent in (
         IntentCategory.DRUG_INTERACTION,
@@ -377,26 +379,23 @@ def process_chat(
             drug_repo,
             intent.lifestyle_substances or None,
         )
-        check_context = format_check_report_for_prompt(
-            report, ambiguities=ambiguous or None
-        )
-        # 与 format_check_report_for_prompt 的渲染条件严格对齐：触发规则 /
-        # 叠加警告 / 未收录 / 近似匹配 / 共享成分（sources≥2）任一进了 prompt，
-        # 就算有确定性发现——抑制「无引用」注记，避免与已传达的结论矛盾。
-        has_findings = bool(
-            report.triggered_rules
-            or report.overlap.warnings
-            or report.unresolved_drugs
-            or ambiguous
-            or any(len(t.sources) >= 2 for t in report.overlap.overlapping)
-        )
+        check_context = format_check_report_for_prompt(report)
+        # 近似匹配披露走独立提示槽位，不冒充「确定性规则引擎」结论（铁律 #4）
+        ambiguity_note = format_ambiguity_note(ambiguous) if ambiguous else None
+        # 单一事实来源：与 formatter 渲染条件由 report_has_findings 统一
+        has_findings = report_has_findings(report)
     elif ambiguous:
-        # 非检查意图下的近似匹配也必须披露（铁律 #4：不确定就明说，不静默）
-        check_context = format_ambiguity_note(ambiguous)
-        has_findings = True
+        # 非检查意图：未跑规则引擎，近似匹配只能作为独立披露（铁律 #4），
+        # 且不得压制无引用注记（铁律 #2，code review 修复：披露不是发现）。
+        ambiguity_note = format_ambiguity_note(ambiguous)
 
     # 5. 构造含 RAG + 冲突结论的 messages 并调用 LLM
-    messages = build_chat_messages(query, citations, check_context=check_context)
+    messages = build_chat_messages(
+        query,
+        citations,
+        check_context=check_context,
+        ambiguity_note=ambiguity_note,
+    )
     llm_answer = llm.complete_json(messages, LLMAnswer)
 
     # 6. 低置信度兜底（铁律 #4：拿不准必须明说"不确定"）
