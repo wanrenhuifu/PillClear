@@ -59,4 +59,11 @@
    - 「是不是抗生素」命中 prescription（`TestPrescriptionNearMiss::test_asking_if_antibiotic_blocked`）
    - 「下周要哺乳期」命中 special_population（`TestSpecialPopulationNearMiss::test_future_breastfeeding_still_blocked`）
 5. **否定只认紧邻关键词之前**：「发热没有不退的情况」仍触发急症（`TestEmergencyNearMiss::test_negation_only_checked_before_keyword`）——远距否定放行是铁律 #3 下的有意取舍
-6. **品牌名扫描的内嵌短名盲区（仅降级模式）**：LLM 意图分类返回空药名时兜底扫描才触发；此时未收录长名内嵌已收录短名（泰诺林 里的 泰诺）可能误命中——无分词器不可消除。已落地的缓解：扫描仅在 LLM 空名时触发（正常路径不受影响）、紧邻式否定/停药过滤（`pipeline._NEGATED_PRE/POST_MARKERS`，时态标记保守保留，铁律 #1 安全优先）、最左最长不重叠掩蔽、核名歧义不作模式、近似匹配强制披露。在案语义由 `tests/test_chat_pipeline.py::TestScanHardening` 锁定
+6. **品牌名扫描语义（T4/T5/T6 定型）**：
+   - **扫描无条件运行 + LLM∪扫描并集**（`_effective_drug_names`）：确定性扫描与 LLM 抽取取并集去重，补回 LLM 半解析漏掉的药；LLM 裸名经近似匹配规范映射收敛到存储名（扶他林 → 扶他林_外用），同一药不以「用户原文 + 存储名」两种形态进检查。近似匹配强制披露（独立中立槽位，见上第 1 条）。
+   - **裸名歧义降级**（`_brand_patterns`）：核名指向多个存储品、或裸名与注解兄弟并存（扶他林 与 扶他林_外用）时，裸名/核名不作匹配模式——宁走整句检索也不静默命中某个剂型（召回不得依赖入库顺序）。
+   - **紧邻式否定/停药过滤**（`_is_past_or_negated`，`_NEGATED_PRE/POST_MARKERS`）：只认药名前 3 字窗口内的动词否定（不吃/停用…）与药名后 4 字窗口内的停药标记（停了/戒了…）；时态词（昨天/上周/以前…）与健康状态词（康复/痊愈…）不作标记，保守保留进检查（铁律 #1 安全优先，宁可多警告也不漏正在吃的药）。
+   - **已知盲区（无分词器不可消除）**：
+     - 「泰诺林里的泰诺」子串误命中：未收录长名内嵌已收录短名时，扫描仍把内嵌短名检出为药名。缓解靠最长优先不重叠掩蔽（长名在库时压住内嵌短名）；LLM 正常路径不受影响（意图分类仍正确提取长名），误命中仅在意图分类完全失手、纯扫描兜底时显现。
+     - 紧邻式否定固有盲区：「不想停用泰诺 / 别停用泰诺」前置窗口仍误杀仍在吃的药——「停用」紧邻药名被当作否定信号，实际「不想/别」否定的是「停用」本身。保守方向的已知取舍：宁可多警告也不漏正在吃的药。
+   - 在案语义由 `tests/test_chat_pipeline.py::TestScanHardening` / `TestBrandScan` 锁定
