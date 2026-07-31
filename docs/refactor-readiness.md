@@ -59,4 +59,4 @@
    - 「是不是抗生素」命中 prescription（`TestPrescriptionNearMiss::test_asking_if_antibiotic_blocked`）
    - 「下周要哺乳期」命中 special_population（`TestSpecialPopulationNearMiss::test_future_breastfeeding_still_blocked`）
 5. **否定只认紧邻关键词之前**：「发热没有不退的情况」仍触发急症（`TestEmergencyNearMiss::test_negation_only_checked_before_keyword`）——远距否定放行是铁律 #3 下的有意取舍
-6. **品牌名扫描的内嵌短名盲区（仅降级模式）**：LLM 意图分类返回空药名时兜底扫描才触发；此时未收录长名内嵌已收录短名（泰诺林 里的 泰诺）可能误命中——无分词器不可消除。已落地的缓解：扫描仅在 LLM 空名时触发（正常路径不受影响）、过去/否定语境窗口过滤（`pipeline._PAST_OR_NEGATED_MARKERS`）、最左最长不重叠掩蔽、核名歧义不作模式、近似匹配强制披露。在案语义由 `tests/test_chat_pipeline.py::TestScanHardening` 锁定
+6. **品牌名扫描的内嵌短名盲区（仅降级模式）**：LLM 意图分类返回空药名时兜底扫描才触发；此时未收录长名内嵌已收录短名（泰诺林 里的 泰诺）可能误命中——无分词器不可消除。已落地的缓解：扫描仅在 LLM 空名时触发（正常路径不受影响）、紧邻式否定/停药过滤（`pipeline._NEGATED_PRE/POST_MARKERS`，时态标记保守保留，铁律 #1 安全优先）、最左最长不重叠掩蔽、核名歧义不作模式、近似匹配强制披露。在案语义由 `tests/test_chat_pipeline.py::TestScanHardening` 锁定

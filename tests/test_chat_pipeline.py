@@ -7,7 +7,7 @@ FakeLLM 按目标 schema 分发预置对象，便于精确断言「扫描不增�
 - 扫描无条件运行，与 LLM 抽取结果取并集去重；LLM 裸名经近似匹配规范映射
   收敛到存储名（扶他林→扶他林_外用），同一药不以「用户原文 + 存储名」双形态进检查；
 - 最左优先、同位最长优先、不重叠、覆盖所有出现位置；
-- 过去/否定语境（「上周吃…」）里的提及不参与检测；
+- 紧邻否定/停药语境（「不吃/停了…」）里的提及不参与检测；时态含糊提及保守保留；
 - 核名解析到带注解存储名（扶他林→扶他林_外用）属近似匹配，必须在 prompt 披露；
 - 整句检索始终参与（非品牌词召回 + pgvector 语义路径），引用总量封顶。
 """
@@ -349,16 +349,58 @@ class TestBrandScan:
 
 
 class TestScanHardening:
-    def test_past_tense_mention_skipped(self, repo, rules):
-        """「上周吃泰诺」是过去式 → 泰诺 不参与检测；现在在吃的 必理通 保留。"""
+    def test_temporal_mention_kept_conservatively(self, repo, rules):
+        """「上周吃泰诺」是时态含糊提及 → 保守保留进检查（宁可多警告，不漏当前用药）。
+
+        旧 6 字符窗口把「昨天感冒了，泰诺…」这类时态词修饰症状而非用药的情况误杀；
+        铁律 #1 安全优先：时态标记不再触发跳过。
+        """
         _, _, ret = _run(
             "上周吃泰诺，现在吃必理通，有冲突吗",
             _empty_intent(IntentCategory.DRUG_INTERACTION),
             repo,
             rules,
         )
-        assert "泰诺" not in ret.terms
+        assert "泰诺" in ret.terms
         assert "必理通" in ret.terms
+
+    def test_post_position_stop_marks_dropped(self, repo, rules):
+        """后置停药标记（停了/戒了/停药）→ 已停的药不进检查（修发现 4）。"""
+        for query in ("泰诺停了", "泰诺我戒了", "泰诺停药了", "已经停用泰诺了"):
+            _, _, ret = _run(query, _empty_intent(), repo, rules)
+            assert "泰诺" not in ret.terms, query
+
+    def test_adjacent_negation_dropped(self, repo, rules):
+        """紧邻药名前的「不吃/没吃」→ 否定语境，跳过。"""
+        for query in ("不吃泰诺", "没吃泰诺", "停用泰诺"):
+            _, _, ret = _run(query, _empty_intent(), repo, rules)
+            assert "泰诺" not in ret.terms, query
+
+    def test_illness_clause_does_not_drop_drug(self, repo, rules):
+        """「昨天感冒了，泰诺和必理通能一起吃吗」→ 昨天修饰症状，两药都保留。"""
+        _, _, ret = _run(
+            "昨天感冒了，泰诺和必理通能一起吃吗",
+            _empty_intent(IntentCategory.DRUG_INTERACTION),
+            repo,
+            rules,
+        )
+        assert "泰诺" in ret.terms and "必理通" in ret.terms
+
+    def test_marker_collision_with_drug_name_kept(self, rules):
+        """「康复后吃康复新液」→ 康复/痊愈 不再是标记，真实药名 康复新液 保留。"""
+        r = _repo_with(("康复新液", [("康复新液", 100)]))
+        _, _, ret = _run("康复后吃康复新液", _empty_intent(), r, rules)
+        assert "康复新液" in ret.terms
+
+    def test_previously_but_still_taking_kept(self, repo, rules):
+        """「以前吃泰诺，现在也在吃」→ 现在也在吃，泰诺 保留。"""
+        _, _, ret = _run(
+            "以前吃泰诺，现在也在吃，能和必理通一起吃吗",
+            _empty_intent(IntentCategory.DRUG_INTERACTION),
+            repo,
+            rules,
+        )
+        assert "泰诺" in ret.terms
 
     def test_scan_exception_degrades_not_raises(self, rules):
         """list_drugs 抛异常 → 降级为空名单，/chat 不 500（docstring 承诺的 invariant）。"""

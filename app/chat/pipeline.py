@@ -75,34 +75,26 @@ _INTENT_MAX_TOKENS = 150
 #   LLM 裸名经近似匹配规范映射收敛到存储名（扶他林 → 扶他林_外用），同一药
 #   不以「用户原文 + 存储名」两种形态进检查（引用了说明书又说暂未收录，自相矛盾）。
 # - 最左优先 / 同位最长优先 / 不重叠 / 覆盖所有出现位置。
-# - 过去 / 否定语境里的提及（「上周吃泰诺」）不表示现在在吃，不参与检测。
+# - 紧邻否定 / 停药语境里的提及（「不吃泰诺」「泰诺停了」）不表示现在在吃，
+#   不参与检测；时态含糊提及（「上周吃泰诺」）保守保留进检查（铁律 #1 安全优先）。
 # - 核名解析到带注解存储名（扶他林→扶他林_外用）属近似匹配，必须披露。
 # - 裸名与注解兄弟并存（扶他林 与 扶他林_外用）时，裸名降级不作模式
 #   （code review 修复），宁走整句检索也不静默查错剂型。
 # 已知盲区（无分词器不可消除，见 docs/refactor-readiness.md）：LLM 完全
 # 失手时，未收录长名内嵌已收录短名（泰诺林 里的 泰诺）仍可能误命中。
 
-# 匹配起点前窗口内出现这些标记 → 视为过去 / 否定语境，跳过该提及。
-_PAST_OR_NEGATED_MARKERS = (
-    "上周",
-    "上个",
-    "上月",
-    "去年",
-    "昨天",
-    "前天",
-    "以前",
-    "之前",
-    "从前",
-    "停药",
-    "停了",
-    "不吃",
-    "没吃",
-    "不再",
-    "康复",
-    "痊愈",
-    "戒了",
+# 否定 / 停药检测（code review 后重写）：只认两类强信号——
+# ① 紧邻药名前的动词否定（汉语「动词+宾语」语序：不吃泰诺 / 停用泰诺）；
+# ② 药名后小窗内的停药标记（泰诺停了 / 泰诺戒了）。
+# 铁律 #1 安全优先：宁可把「上周吃泰诺」这类时态含糊提及保留进检查（多警告），
+# 也不漏掉正在吃的药（少警告 = 漏相互作用）。故时态词（昨天/上周/以前…）与
+# 健康状态词（康复/痊愈…）一律不作标记——它们常修饰症状而非用药，且会撞药名
+# （康复新液）。与 safety.py 的紧邻否定精神一致（那层只管急症拦截，本层只管当前用药）。
+_NEGATED_PRE_MARKERS = ("没再吃", "不吃", "没吃", "别吃", "停吃", "停用", "停药")
+_NEGATED_POST_MARKERS = (
+    "停药", "停用", "停了", "停吃", "戒了", "戒掉", "不吃了", "没吃了", "没吃",
 )
-_PAST_OR_NEGATED_WINDOW = 6
+_NEGATED_POST_WINDOW = 4
 
 # ── 检索预算（端到端 < 1s 设计目标：prompt 体量必须封顶）────────
 _BRAND_TERM_LIMIT = 12  # 按药名检索时每个药名的章节上限（单份说明书典型 10-14 章）
@@ -203,10 +195,13 @@ def _brand_patterns(brands: list[dict]) -> list[tuple[str, str]]:
     return pairs
 
 
-def _is_past_or_negated(query: str, start: int) -> bool:
-    """匹配起点前窗口内出现过去 / 否定标记 → 该提及不表示「现在在吃」。"""
-    window = query[max(0, start - _PAST_OR_NEGATED_WINDOW) : start]
-    return any(marker in window for marker in _PAST_OR_NEGATED_MARKERS)
+def _is_past_or_negated(query: str, start: int, end: int) -> bool:
+    """紧邻药名前动词否定 或 药名后小窗内停药标记 → 该提及不表示「现在在吃」。"""
+    pre = query[max(0, start - 3):start]  # 最长前标记「没再吃」= 3 字符
+    if any(pre.endswith(m) for m in _NEGATED_PRE_MARKERS):
+        return True
+    post = query[end:end + _NEGATED_POST_WINDOW]
+    return any(m in post for m in _NEGATED_POST_MARKERS)
 
 
 def _scan_brand_names(
@@ -237,7 +232,7 @@ def _scan_brand_names(
     ambiguous: list[tuple[str, str]] = []
     ambiguous_set: set[tuple[str, str]] = set()
     for m in alt_re.finditer(query):
-        if _is_past_or_negated(query, m.start()):
+        if _is_past_or_negated(query, m.start(), m.end()):
             continue
         term = m.group()
         stored = mapping[term]
