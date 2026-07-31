@@ -4,8 +4,8 @@
 FakeLLM 按目标 schema 分发预置对象，便于精确断言「扫描不增加 LLM 调用」。
 
 扫描语义（code review 修复后定型）：
-- 仅当 LLM 意图分类没抽到任何药名时触发（降级兜底，不与 LLM 名并集——
-  并集会把同一药以「用户原文 + 存储名」两种形态送进检查，自相矛盾）；
+- 扫描无条件运行，与 LLM 抽取结果取并集去重；LLM 裸名经近似匹配规范映射
+  收敛到存储名（扶他林→扶他林_外用），同一药不以「用户原文 + 存储名」双形态进检查；
 - 最左优先、同位最长优先、不重叠、覆盖所有出现位置；
 - 过去/否定语境（「上周吃…」）里的提及不参与检测；
 - 核名解析到带注解存储名（扶他林→扶他林_外用）属近似匹配，必须在 prompt 披露；
@@ -201,8 +201,11 @@ class TestBrandScan:
         assert [c.brand_name for c in result.citations] == ["泰诺"]
         assert llm.calls == 3  # safety 补漏 + intent + answer，扫描零额外调用
 
-    def test_scan_stays_quiet_when_llm_named_drugs(self, repo, rules):
-        """LLM 抽到了药名 → 不扫描、不并集（避免子串误命中进规则引擎）。"""
+    def test_scan_unions_with_llm_names(self, repo, rules):
+        """LLM 只抽到 泰诺 时，扫描并集补回 query 里被漏的 必理通（code review 修复）。
+
+        全有或全无门控会把半解析交互问题里的药静默丢掉（查不出相互作用）。
+        """
         intent = IntentResult(
             intent=IntentCategory.DRUG_INTERACTION,
             confidence=0.9,
@@ -215,10 +218,27 @@ class TestBrandScan:
             rules,
             canned={"泰诺": [_cite("泰诺")], "必理通": [_cite("必理通")]},
         )
-        # query 里还有 必理通，但 LLM 名单非空 → 扫描不触发
-        assert ret.terms == ["泰诺", "泰诺和必理通能一起吃吗"]
-        assert "必理通" not in ret.terms
-        assert llm.calls == 3
+        assert "必理通" in ret.terms  # 扫描补回
+        assert llm.calls == 3  # 扫描仍是零额外 LLM 调用
+
+    def test_llm_bare_name_resolves_to_annotated_stored(self, repo, rules):
+        """LLM 说「扶他林」→ 规范映射到存储名 扶他林_外用，不产生「暂未收录」自相矛盾。"""
+        intent = IntentResult(
+            intent=IntentCategory.DRUG_INTERACTION,
+            confidence=0.9,
+            drug_names=["扶他林"],
+        )
+        result, llm, ret = _run(
+            "扶他林能和布洛芬一起吃吗",
+            intent,
+            repo,
+            rules,
+            answer_citations=[],
+        )
+        prompt = _system_prompt(llm)
+        assert "扶他林_外用" in prompt
+        assert "暂未收录" not in prompt  # 裸名没有以「查不到」形态进入检查
+        assert "扶他林_外用" in ret.terms
 
     def test_nested_brand_longest_match(self, repo, rules):
         """三九感冒灵 套住 感冒灵 → 只收最长，不二次命中。"""

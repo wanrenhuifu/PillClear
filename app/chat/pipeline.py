@@ -69,11 +69,11 @@ _NO_CITATION_NOTE = (
 # 意图分类用低 max_tokens 压低延迟（任务三：端到端 < 1s 的设计目标）。
 _INTENT_MAX_TOKENS = 150
 
-# ── 确定性商品名扫描（LLM 意图分类失手时的降级兜底）──────────────
+# ── 确定性商品名扫描（LLM∪扫描并集 + 规范映射，code review 修复）─
 # 语义约定（code review 后定型）：
-# - 仅降级兜底：LLM 抽到的药名为空时才扫描，不与 LLM 名并集——并集会把
-#   同一药以「用户原文 + 存储名」两种形态送进检查（引用了说明书又说
-#   暂未收录，自相矛盾），子串误命中还会喂给规则引擎凭空触发 danger 告警。
+# - 扫描无条件运行：与 LLM 抽取结果取并集去重，补回 LLM 半解析漏掉的药；
+#   LLM 裸名经近似匹配规范映射收敛到存储名（扶他林 → 扶他林_外用），同一药
+#   不以「用户原文 + 存储名」两种形态进检查（引用了说明书又说暂未收录，自相矛盾）。
 # - 最左优先 / 同位最长优先 / 不重叠 / 覆盖所有出现位置。
 # - 过去 / 否定语境里的提及（「上周吃泰诺」）不表示现在在吃，不参与检测。
 # - 核名解析到带注解存储名（扶他林→扶他林_外用）属近似匹配，必须披露。
@@ -253,23 +253,33 @@ def _scan_brand_names(
 def _effective_drug_names(
     query: str, intent: IntentResult, drug_repo: DrugReader
 ) -> tuple[list[str], list[tuple[str, str]]]:
-    """解析有效药名名单：LLM 抽取优先，LLM 空名时确定性扫描兜底。
+    """解析有效药名名单：LLM 抽取与确定性扫描并集，规范映射去重。
 
-    扫描仅在 intent.drug_names 为空时触发：它是意图分类失手时的降级兜底
-    （修「引用掉 0」），不与 LLM 名并集——并集会让同一药以「用户原文 +
-    存储名」两种形态进入检查（自相矛盾），子串误命中还会凭空触发规则告警。
+    扫描无条件运行（修「引用掉 0」，并补回 LLM 半解析漏掉的药）；LLM 药名经
+    扫描的近似匹配映射收敛到存储名（扶他林 → 扶他林_外用），避免同一药以
+    「用户原文 + 存储名」两种形态进检查（自相矛盾）。子串误命中是已知盲区
+    （无分词器不可消除，见 docs/refactor-readiness.md）。
 
     返回 (有效药名, 近似匹配)。list_drugs / 扫描任何环节失败一律降级为
     空名单，绝不阻断主流程（与流水线「处处降级」哲学一致）。
     """
     llm_names = _dedup_stripped(intent.drug_names)
-    if llm_names:
-        return llm_names, []
     try:
-        return _scan_brand_names(query, drug_repo.list_drugs())
+        scan_names, ambiguous = _scan_brand_names(query, drug_repo.list_drugs())
     except Exception:  # noqa: BLE001 - 扫描是增强，失败不得阻断
         logger.warning("品牌名扫描失败，降级为空名单", exc_info=True)
-        return [], []
+        scan_names, ambiguous = [], []
+    # 规范映射：近似匹配 (term→stored) 与精确命中 (name→name) 都用于收敛 LLM 名
+    canonical = {term: stored for term, stored in ambiguous}
+    canonical.update({n: n for n in scan_names})
+    effective = list(scan_names)
+    seen = set(scan_names)
+    for name in llm_names:
+        resolved = canonical.get(name, name)
+        if resolved not in seen:
+            seen.add(resolved)
+            effective.append(resolved)
+    return effective, ambiguous
 
 
 def _retrieve_citations(
@@ -336,7 +346,7 @@ def process_chat(
     # 2. 意图分类（任务三：失败降级 drug_info，不阻断）
     intent = _classify_intent(llm, query)
 
-    # 2.5 药名解析：LLM 抽取优先，空名时确定性扫描兜底（铁律 #1 确定性优先）
+    # 2.5 药名解析：LLM∪扫描并集 + 规范映射到存储名（铁律 #1 确定性优先）
     effective, ambiguous = _effective_drug_names(query, intent, drug_repo)
 
     # 3. 按名 ∪ 整句检索 RAG（铁律 #2：回答必须带引用；总量封顶）
