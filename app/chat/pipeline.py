@@ -77,6 +77,8 @@ _INTENT_MAX_TOKENS = 150
 # - 最左优先 / 同位最长优先 / 不重叠 / 覆盖所有出现位置。
 # - 过去 / 否定语境里的提及（「上周吃泰诺」）不表示现在在吃，不参与检测。
 # - 核名解析到带注解存储名（扶他林→扶他林_外用）属近似匹配，必须披露。
+# - 裸名与注解兄弟并存（扶他林 与 扶他林_外用）时，裸名降级不作模式
+#   （code review 修复），宁走整句检索也不静默查错剂型。
 # 已知盲区（无分词器不可消除，见 docs/refactor-readiness.md）：LLM 完全
 # 失手时，未收录长名内嵌已收录短名（泰诺林 里的 泰诺）仍可能误命中。
 
@@ -161,32 +163,39 @@ def _brand_patterns(brands: list[dict]) -> list[tuple[str, str]]:
 
     歧义核名不作模式：同一核名指向多个存储品（扶他林_外用 / 扶他林_口服），
     或核名本身已是另一个存储品（裸名 扶他林 与 扶他林_外用 并存）时，
-    仅凭核名无法确定剂型 → 只保留全名模式。宁可按整句检索降级，
-    也不静默命中某一个剂型（召回不得依赖入库顺序）。
+    仅凭核名无法确定剂型 → 只保留全名模式，其中裸名自身同样降级不作模式
+    （code review 修复）。宁可按整句检索降级，也不静默命中某一个剂型
+    （召回不得依赖入库顺序）。
     """
     rows: list[tuple[str, str | None]] = []
-    full_names: set[str] = set()
     core_owners: dict[str, set[str]] = {}
     for d in brands:
         name = (d.get("brand_name") or "").strip()
         if not name:
             continue
         core = name.split("_", 1)[0].strip()
-        if core and core != name and len(core) >= 2:
+        if core and len(core) >= 2:
+            # 裸名也注册自己的 core：让「裸名 + 注解兄弟」的并存被 ambiguity 捕捉
             core_owners.setdefault(core, set()).add(name)
+            rows.append((name, core if core != name else None))
         else:
-            core = None
-        rows.append((name, core))
-        full_names.add(name)
+            rows.append((name, None))
+    # 一个 core 有多个 owner（含裸名自身）→ 歧义，只保留全名模式
     ambiguous_cores = {
-        core
-        for core, owners in core_owners.items()
-        if len(owners) > 1 or core in full_names
+        core for core, owners in core_owners.items() if len(owners) > 1
     }
     pairs: list[tuple[str, str]] = []
     seen: set[str] = set()
     for name, core in rows:
-        aliases = (name, core) if core and core not in ambiguous_cores else (name,)
+        if core is None:
+            # 裸名：若 core 与注解兄弟共享（歧义），不命中任一剂型 → 降级整句检索
+            if name in ambiguous_cores:
+                continue
+            aliases = (name,)
+        elif core in ambiguous_cores:
+            aliases = (name,)
+        else:
+            aliases = (name, core)
         for a in aliases:
             if a not in seen:
                 seen.add(a)

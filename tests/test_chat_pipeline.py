@@ -389,6 +389,20 @@ class TestScanHardening:
         assert "扶他林_口服" not in ret.terms
         assert ret.terms == ["扶他林空腹吃伤胃吗"]
 
+    def test_bare_name_with_annotated_sibling_degrades(self, rules):
+        """裸名 扶他林 与 扶他林_外用 并存 → 裸名不作模式（静默命中任一个剂型 = bug）。
+
+        「扶他林能外用吗」无法确定剂型：宁可按整句检索降级，也不静默按口服剂型查。
+        """
+        r = _repo_with(
+            ("扶他林", [("双氯芬酸", 25)]),
+            ("扶他林_外用", [("双氯芬酸", 10)]),
+        )
+        _, _, ret = _run("扶他林能外用吗", _empty_intent(), r, rules)
+        assert "扶他林" not in ret.terms
+        assert "扶他林_外用" not in ret.terms
+        assert ret.terms == ["扶他林能外用吗"]  # 整句检索降级
+
     def test_ambiguous_core_resolution_disclosed_for_interaction(self, repo, rules):
         """interaction 下核名解析到注解品 → prompt 同时带检查结论与近似匹配披露。"""
         result, llm, _ = _run(
