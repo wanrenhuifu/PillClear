@@ -111,7 +111,7 @@ def _seed_two_drugs() -> SQLiteDrugRepository:
 
 class TestKeywordRetriever:
     def test_exact_brand_name_match(self):
-        """搜"泰诺"精确命中品牌名，返回该药所有 chunk。"""
+        """搜"泰诺"精确命中品牌名，返回该药匹配到的 chunk（受 limit 约束，按章节顺序截断）。"""
         repo = _seed_two_drugs()
         retriever = KeywordRetriever(connection=repo.connection)
         citations = retriever.search("泰诺")
@@ -143,7 +143,7 @@ class TestKeywordRetriever:
         assert retriever.search("泰诺") == []
 
     def test_limit_is_respected(self):
-        """limit 仅在 content fallback 路径生效。"""
+        """limit 在三级降级一律生效；content 分支语义不变。"""
         repo = SQLiteDrugRepository(":memory:")
         for i in range(5):
             drug_id = repo.upsert_drug(_record(f"药{i}", ("X", 1)))

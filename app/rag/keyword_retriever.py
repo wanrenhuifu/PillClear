@@ -26,6 +26,7 @@ SELECT d.brand_name, c.section, c.content
 FROM insert_chunks c
 JOIN drugs d ON d.id = c.drug_id
 WHERE d.brand_name = ?
+ORDER BY c.id
 LIMIT ?
 """
 
@@ -34,7 +35,7 @@ SELECT d.brand_name, c.section, c.content
 FROM insert_chunks c
 JOIN drugs d ON d.id = c.drug_id
 WHERE d.brand_name LIKE ?
-LIMIT ?
+ORDER BY c.id
 """
 
 _SEARCH_BY_CONTENT = """
@@ -42,6 +43,7 @@ SELECT d.brand_name, c.section, c.content
 FROM insert_chunks c
 JOIN drugs d ON d.id = c.drug_id
 WHERE c.content LIKE ? OR c.section LIKE ?
+ORDER BY c.id
 LIMIT ?
 """
 
@@ -84,12 +86,12 @@ class KeywordRetriever:
             if rows:
                 return self._rows_to_citations(rows)
 
-            # 2. 模糊匹配品牌名（搜索词为药名子串；多药命中时同样受 limit 截断）
-            rows = conn.execute(
-                _SEARCH_BY_BRAND_LIKE, (f"%{term}%", limit)
-            ).fetchall()
+            # 2. 模糊匹配品牌名：全量按 id 序拉取，Python 侧每品牌轮转分配。
+            #    多药命中（泰诺 → 泰诺林片/泰诺胶囊/泰诺颗粒）时每药都有份额，
+            #    不因入库顺序让第一个药吃满预算（code review 修复）。
+            rows = conn.execute(_SEARCH_BY_BRAND_LIKE, (f"%{term}%",)).fetchall()
             if rows:
-                return self._rows_to_citations(rows)
+                return self._fair_alloc(rows, limit)
 
             # 3. 降级到章节内容搜索
             like_term = f"%{term}%"
@@ -106,6 +108,28 @@ class KeywordRetriever:
                 excerpt=content[:_EXCERPT_MAX_LEN],
             )
             for brand_name, section, content in rows
+        ]
+
+    @staticmethod
+    def _fair_alloc(rows: list[tuple], limit: int) -> list[Citation]:
+        """多品牌行按 c.id 序轮转分配，直到 limit：每品牌至少一份（确定性）。"""
+        groups: dict[str, list] = {}
+        order: list[str] = []
+        for brand, section, content in rows:
+            if brand not in groups:
+                groups[brand] = []
+                order.append(brand)
+            groups[brand].append((brand, section, content))
+        out: list[tuple] = []
+        idx = 0
+        while len(out) < limit and any(len(g) > idx for g in groups.values()):
+            for brand in order:
+                if idx < len(groups[brand]) and len(out) < limit:
+                    out.append(groups[brand][idx])
+            idx += 1
+        return [
+            Citation(brand_name=b, section=s, excerpt=c[:_EXCERPT_MAX_LEN])
+            for b, s, c in out
         ]
 
     def _get_conn(self) -> sqlite3.Connection:
