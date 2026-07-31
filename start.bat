@@ -20,6 +20,22 @@ if errorlevel 1 (
 )
 if not exist ".env" echo [PillClear] WARNING: .env not found. Copy .env.example to .env and set DEEPSEEK_API_KEY, the only required variable.
 
+REM -- frontend runtime check --
+where node >nul 2>&1
+if errorlevel 1 (
+    echo [PillClear] ERROR: node not found. Install Node.js LTS from https://nodejs.org/ first, then re-run this script.
+    exit /b 1
+)
+where npm >nul 2>&1
+if errorlevel 1 (
+    echo [PillClear] ERROR: npm not found. Install Node.js LTS from https://nodejs.org/ first, then re-run this script.
+    exit /b 1
+)
+if not exist "web\package.json" (
+    echo [PillClear] ERROR: web\package.json not found. Cannot start the frontend; make sure this is the PillClear repo root.
+    exit /b 1
+)
+
 REM -- frontend dependencies: check the vite executable, not just the folder;
 REM -- a partially installed node_modules still counts as missing.
 if exist "web\node_modules\.bin\vite.cmd" goto deps_ok
