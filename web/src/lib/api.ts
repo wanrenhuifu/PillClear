@@ -4,6 +4,7 @@ import type {
   DrugSummary,
   MedboxItem,
   MedboxResponse,
+  ReminderResponse,
 } from "../types/api";
 
 export type ApiErrorKind = "llm" | "http" | "network";
@@ -76,3 +77,16 @@ export const checkMedbox = (items: MedboxItem[], lifestyleSubstances: string[]) 
     items,
     lifestyle_substances: lifestyleSubstances,
   }));
+
+export const getReminders = (deviceId: string) =>
+  request<ReminderResponse>(`/api/v1/reminders/${deviceId}`);
+
+export const setReminder = (
+  deviceId: string,
+  item: { drug_id: number; brand_name: string; times: string[] },
+) => request<ReminderResponse>(`/api/v1/reminders/${deviceId}/items`, json(item));
+
+export const removeReminder = (deviceId: string, drugId: number) =>
+  request<ReminderResponse>(`/api/v1/reminders/${deviceId}/items/${drugId}`, {
+    method: "DELETE",
+  });

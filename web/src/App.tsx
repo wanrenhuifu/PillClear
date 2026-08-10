@@ -4,6 +4,7 @@ import { Header } from "./components/ui/Header";
 import { TabBar } from "./components/ui/TabBar";
 import { ChatView } from "./features/chat/ChatView";
 import { MedboxPanel } from "./features/medbox/MedboxPanel";
+import { ReminderPanel } from "./features/reminder/ReminderPanel";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1 } },
@@ -20,6 +21,7 @@ export function AppRoutes() {
             <Route path="/" element={<Navigate to="/chat" replace />} />
             <Route path="/chat" element={<ChatView />} />
             <Route path="/medbox" element={<MedboxPanel variant="full" />} />
+            <Route path="/reminders" element={<ReminderPanel />} />
           </Routes>
         </main>
         <aside className="hidden w-80 shrink-0 lg:block">

@@ -60,3 +60,15 @@ export interface CheckReport {
   triggered_rules: TriggeredRule[];
   unresolved_drugs: string[];
 }
+
+export interface Reminder {
+  drug_id: number;
+  brand_name: string;
+  times: string[];
+  next_due_at: string | null;
+}
+
+export interface ReminderResponse {
+  device_id: string;
+  reminders: Reminder[];
+}

@@ -23,11 +23,18 @@ from app.medbox.repository import (
 from app.medbox.service import MedboxService
 from app.medbox.sqlite_medbox_repo import SQLiteUserMedboxRepository
 from app.rag import KeywordRetriever, NullRetriever, PgVectorRetriever, Retriever
+from app.reminder.repository import (
+    InMemoryReminderRepository,
+    PostgresReminderRepository,
+    ReminderRepository,
+)
+from app.reminder.service import ReminderService
+from app.reminder.sqlite_reminder_repo import SQLiteReminderRepository
 from app.rules.engine import DEFAULT_RULES_DIR, load_rules
 from app.rules.schemas import RuleSet
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """全局 Settings 单例（首次调用时从 .env 加载，后续命中缓存）。"""
     return Settings()
@@ -99,7 +106,7 @@ def get_retriever(
     return retriever
 
 
-@lru_cache()
+@lru_cache
 def get_rule_set() -> RuleSet:
     """全局规则集单例（D4）。规则是纯静态 YAML 数据、无 Settings 依赖，
     lru_cache 安全；测试经 dependency_overrides 整体替换，无隔离陷阱。"""
@@ -169,3 +176,39 @@ def get_medbox_service(
 ) -> MedboxService:
     """药箱 CRUD 服务：绑定持久化仓储，每请求新建。"""
     return MedboxService(user_repo)
+
+
+# 同 _USER_REPOSITORIES：Settings 不可哈希，按 id 缓存并钉住 Settings 引用。
+_REMINDER_REPOSITORIES: dict[int, tuple[Settings, ReminderRepository]] = {}
+
+
+def get_reminder_repository(
+    settings: Settings = Depends(get_settings),
+    drug_repo: DrugRepository = Depends(get_drug_repository),
+) -> ReminderRepository:
+    """提醒仓储：跟随药品仓储的后端类型（同药箱仓储的选型逻辑）。
+
+    - SQLite → 共享药品仓储的连接 + 锁（code review #13）；
+    - Postgres → 自建连接的 Postgres 提醒仓储；
+    - InMemory（测试覆盖 / 降级）→ 内存提醒仓储。
+    """
+    entry = _REMINDER_REPOSITORIES.get(id(settings))
+    if entry is not None:
+        return entry[1]
+    if isinstance(drug_repo, SQLiteDrugRepository):
+        repo: ReminderRepository = SQLiteReminderRepository(
+            drug_repo.connection, lock=drug_repo.lock
+        )
+    elif isinstance(drug_repo, PostgresDrugRepository):
+        repo = PostgresReminderRepository(settings.database_url)
+    else:
+        repo = InMemoryReminderRepository()
+    _REMINDER_REPOSITORIES[id(settings)] = (settings, repo)
+    return repo
+
+
+def get_reminder_service(
+    repo: ReminderRepository = Depends(get_reminder_repository),
+) -> ReminderService:
+    """提醒 CRUD 服务：绑定持久化仓储，每请求新建。"""
+    return ReminderService(repo)

@@ -13,6 +13,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.listDrugs).mockResolvedValue([]);
   vi.mocked(api.getMedbox).mockResolvedValue({ device_id: "dev-test", items: [] });
+  vi.mocked(api.getReminders).mockResolvedValue({ device_id: "dev-test", reminders: [] });
 });
 
 function renderAt(path: string) {
@@ -38,7 +39,13 @@ it("/medbox 渲染全页药箱(含选择器)", async () => {
   expect(await screen.findByText("添加药品")).toBeInTheDocument();
 });
 
-it("底部 tab 可在两个视图间切换", async () => {
+it("/reminders 渲染提醒面板", async () => {
+  renderAt("/reminders");
+  expect(await screen.findByText("添加提醒")).toBeInTheDocument();
+  expect(screen.getByText("还没有提醒")).toBeInTheDocument();
+});
+
+it("底部 tab 可在视图间切换", async () => {
   renderAt("/chat");
   const user = userEvent.setup();
   await user.click(screen.getByRole("link", { name: "药箱" }));

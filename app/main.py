@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.deps import get_settings
 from app.api.drug_routes import router as drug_router
 from app.api.medbox_routes import router as medbox_router
+from app.api.reminder_routes import router as reminder_router
 from app.api.routes import router
 from app.config import Settings
 
@@ -40,6 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(router, prefix="/api/v1")
     app.include_router(medbox_router, prefix="/api/v1")
     app.include_router(drug_router, prefix="/api/v1")
+    app.include_router(reminder_router, prefix="/api/v1")
 
     app.dependency_overrides[get_settings] = lambda: settings
 

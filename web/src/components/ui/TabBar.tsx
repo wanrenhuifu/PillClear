@@ -12,6 +12,16 @@ const TABS = [
       </>
     ),
   },
+  {
+    to: "/reminders",
+    label: "提醒",
+    icon: (
+      <>
+        <circle cx="12" cy="13" r="7" />
+        <path d="M12 10v3l2 2M9 3l-2 2M15 3l2 2" />
+      </>
+    ),
+  },
 ];
 
 export function TabBar() {
