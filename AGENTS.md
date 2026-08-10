@@ -36,6 +36,16 @@ Windows 一键启动：`start.bat`（同时拉起前后端）。
 
 **Lint 只有 ruff**（无 black/mypy/pre-commit），配置在 `pyproject.toml [tool.ruff]`：select F/E/W/I/UP/B/SIM/PLC/RUF；`RUF001-003`（中文标点误报）已 ignore；FastAPI `Depends/Query/Path` 已豁免 B008。提交前跑 `ruff check app tests`。GitHub Actions CI（`.github/workflows/ci.yml`）跑 ruff + pytest + 前端 vitest + build。
 
+### 改动后的最小验证（每次必做）
+
+**每次完成代码改动后**，在交付/提交前必须运行：
+
+1. 先跑受影响的测试文件，例如 `pytest tests/test_chat_pipeline.py`（替换为实际受影响的文件）；
+2. 通过后按需跑全量 `pytest`（基线 405，低于基线立即排查）；
+3. golden 文案变红（`tests/test_prompts_golden.py`）= 行为变更，先确认是有意改动，再按下方「Golden 测试重新生成」流程处理，**严禁悄悄改测试凑绿**。
+
+不引入新工具、不改业务代码；验证就是上面已有的 pytest + golden 流程。
+
 ### Golden 测试重新生成
 
 prompt 模板有逐字 golden 比对（`tests/test_prompts_golden.py` + `tests/golden/`）。文案变红 = 行为变更，须先确认是有意改动，再重新生成并在 commit 说明：
