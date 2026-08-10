@@ -14,6 +14,9 @@ pip install -e ".[dev]"
 # 运行全部测试
 pytest
 
+# lint（ruff，配置在 pyproject.toml [tool.ruff]）
+python -m ruff check app tests
+
 # 运行单个测试文件 / 单个测试
 pytest tests/test_ingest.py
 pytest tests/test_ingest.py::test_ingest_is_idempotent
@@ -37,7 +40,7 @@ cd web && npx vitest run                # 前端测试（Vitest + Testing Librar
 - **检索走关键词精确匹配**（`app/rag/keyword_retriever.py`），不依赖 embedding。药名精确匹配 → 模糊匹配 → 内容搜索，三级降级。embedding 仅 Postgres 路径保留
 - **LLM 默认 DeepSeek**（`llm_provider=deepseek`，默认模型 `deepseek-v4-pro`，走 `app/llm/providers.py` 预置）。多厂牌支持：openai / qwen / glm / moonshot / ollama。`Settings` 硬拒绝已废弃模型名 `deepseek-chat` / `deepseek-reasoner`（`config.py:DEPRECATED_MODELS`）
 - **Web 前端**：`web/` 是 React 18 + Vite 6 + Tailwind v4 + TanStack Query + react-router 7 的独立应用，Vitest 测试；API 客户端在 `web/src/lib/api.ts`（错误三分类 llm/http/network），用户以 localStorage 里的 `device_id` 标识（与后端药箱同键）。开发时 Vite 代理 `/api`，无需 CORS；`CORS_ORIGINS` 仅服务于直连部署。
-- **没有配置任何 linter/formatter**（无 ruff/black/mypy/pre-commit），不要虚构 lint 命令；质量闸门只有 pytest 与 golden 比对。
+- **lint 走 ruff**（配置在 `pyproject.toml [tool.ruff]`：F/E/W/I/UP/B/SIM/PLC/RUF；中文标点误报 RUF001-003 与 E501 已豁免，FastAPI `Depends` 惯用法经 `extend-immutable-calls` 豁免）；质量闸门 = ruff + pytest + golden 比对，CI 由 `.github/workflows/ci.yml` 承担（后端 pytest+ruff / 前端 vitest+build）。
 - **测试全程 mock**，HTTP/LLM 调用一律 mock，不打真实网络：`respx_mock` fixture 由 respx 插件自动提供，`conftest.py` 只有 `make_completion()` 响应构造器和一个 `settings()` fixture（`_env_file=None`，套件与开发机 `.env` 无关）。每个用例自建 `:memory:` SQLite，不落盘。`tests/test_medbox_api.py` 刻意不挂 respx——以「装不了 mock」断言药箱路径全程不碰 LLM。
 - **「叠加」有两条独立机制，别混淆**：① `app/medbox/calculator.py` 纯函数（`check_overlap` / `calculate_ingredient_totals`，单位归一化走 `app/core/units.py:to_mg`）按成分求和、对照硬编码 `_DAILY_LIMITS`（对乙酰氨基酚 4000mg 等）算日总摄入量；② `app/rules/data/overlap.yaml` 的规则引擎告警。规则 YAML 共三份：`overlap`（重复成分）/ `interaction`（药-药）/ `alcohol`（药-物质），warning 文案里的 `{count}`/`{total_mg}` 由 `engine.format_warning` 运行期填充（纯代码，无 LLM）。
 - **prompt 模板有 golden 逐字比对**（`tests/test_prompts_golden.py` + `tests/golden/`，14 份）：任何文案漂移立刻变红；**有意**改文案时重新生成并在 commit 说明改动（Unix：`PILLCLEAR_REGEN_GOLDEN=1 python -m pytest tests/test_prompts_golden.py`；PowerShell：`$env:PILLCLEAR_REGEN_GOLDEN=1; python -m pytest tests/test_prompts_golden.py; Remove-Item env:PILLCLEAR_REGEN_GOLDEN`）
@@ -70,6 +73,8 @@ POST /api/v1/chat   → routes.py(薄适配器) → pipeline.process_chat(同步
 POST /api/v1/medbox/check、GET/POST/DELETE /api/v1/medbox/{device_id}[/items[/{drug_id}]]
                     → medbox_routes.py → MedboxService → calculator(叠加求和) + 规则引擎(相互作用) + 未入库药品 → CheckReport
 GET  /api/v1/drugs  → drug_routes.py → 仓储 list_drugs()（前端药品选择器数据源）
+GET/POST/DELETE /api/v1/reminders/{device_id}[/items[/{drug_id}]]
+                    → reminder_routes.py → ReminderService → 时刻表 CRUD + next_due(纯函数，调度数据不碰 LLM)
 ```
 
 **关键分层（跨文件才能看清）**：
@@ -87,12 +92,15 @@ GET  /api/v1/drugs  → drug_routes.py → 仓储 list_drugs()（前端药品选
 | 规则引擎 | `app/rules/engine.py` | 纯函数，YAML 规则（叠加+相互作用） |
 | 提示词 | `app/prompts/` | chat / ingest / intent / safety 四份模板；`formatters.py` 负责引用/检查报告的 prompt 内格式化，静态骨架在 `templates/` |
 | 药箱 | `app/medbox/` | 药箱 CRUD + 成分叠加计算 |
+| 提醒 | `app/reminder/` | 用药提醒时刻表 CRUD + 下次提醒计算（同款 Protocol 三实现） |
 | 入库 | `app/knowledge/` | 章节解析 → LLM 成分抽取 → 幂等 upsert |
 | LLM | `app/llm/` | OpenAI 兼容客户端 + 多厂牌预置 |
 
 **领域词汇**：`CONTEXT.md` 定义了产品/商品名/成分/物质/叠加/相互作用等术语的确切含义和边界。新增概念先查词汇表。架构决策记录在 `docs/adr/`——ADR-0001：保健品按「产品」同构建模、不单列实体；代码里 `Drug`/`drugs` 是「产品」的历史命名（可选重命名，勿当成新实体另起炉灶）。设计 spec 与实施计划按日期归档在 `docs/superpowers/specs/` 和 `docs/superpowers/plans/`（prompt 拆分、web 前端均走此流程，新特性沿用）。
 
-`app/reminder/`（用药提醒）目前是空占位、尚未实现，勿假设其存在行为。
+## 用药提醒（app/reminder/）
+
+提醒是**调度数据**：不参与叠加 / 相互作用计算、永不碰 LLM（`tests/test_reminder.py` 刻意不挂 respx 断言此事）。模式完全对齐药箱：`ReminderRepository` Protocol + InMemory/SQLite/Postgres 三实现（SQLite 共享药品仓储连接+锁；Postgres schema 见 `migrations/0004_user_reminders.sql`）；`next_due(times, now)` 是纯函数，显式注入 now 保证可离线测试；每药 1~4 个 `HH:MM` 时刻，按 (user, drug) 覆盖式设置。
 
 ## 说明书入库流程
 

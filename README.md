@@ -6,7 +6,7 @@
 
 1. 说明书"翻译"成大白话（原文检索，回答带引用）
 2. 药箱冲突 / 重复成分检查（确定性规则引擎）
-3. 用药提醒（规划中）
+3. 用药提醒（每日时刻表 + 服务端计算下次提醒）
 
 ## 铁律
 
@@ -22,7 +22,7 @@
 - **数据库**: 默认 SQLite（零配置）；可选 Supabase（Postgres + pgvector）
 - **检索**: 关键词精确匹配（无 embedding 依赖）
 - **规则引擎**: YAML DSL，纯函数计算
-- **测试**: pytest（TDD），HTTP/LLM 层一律 mock
+- **测试**: pytest（TDD），HTTP/LLM 层一律 mock；lint 走 ruff，CI 走 GitHub Actions
 
 ## 快速开始
 
@@ -31,7 +31,8 @@ pip install -e ".[dev]"
 cp .env.example .env
 # 编辑 .env，填 DEEPSEEK_API_KEY（唯一必填项）
 
-pytest   # 329 个测试全部通过
+pytest   # 405 个测试全部通过
+ruff check app tests   # lint
 ```
 
 ## 前端(Web)
@@ -51,7 +52,7 @@ npm run dev
 cd web && npx vitest run
 ```
 
-打开 http://localhost:5173 即可使用:聊天问诊 + 药箱检查。
+打开 http://localhost:5173 即可使用:聊天问诊 + 药箱检查 + 用药提醒。
 跨域部署时通过 `CORS_ORIGINS` 环境变量配置允许来源(逗号分隔,默认已含 Vite 开发端口)。
 
 ## 环境变量
