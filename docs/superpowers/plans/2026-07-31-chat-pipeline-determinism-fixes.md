@@ -6,7 +6,7 @@
 
 **Architecture:** 不动检索架构。把 pipeline.py 的确定性扫描改对（裸名歧义降级、恢复 LLM∪扫描并集、紧邻式否定），把引用预算改成每药公平 + 整句预留 + 提前终止，把启发式披露移出「确定性规则引擎」通道（独立提示槽位），`has_findings` 收敛为单一事实来源，检索器补 `ORDER BY` 与每品牌公平截断，medbox 仓储强制共享锁，start.bat 补前置检查，golden 补组合顺序。
 
-**Tech Stack:** Python 3.12 + FastAPI；pytest（质量闸门，无 linter）；golden 比对（`tests/golden/`，`PILLCLEAR_REGEN_GOLDEN=1` 重生成）；测试全程 mock，无真实网络/DB。
+**Tech Stack:** Python 3.12 + FastAPI；pytest（质量闸门）+ ruff lint（`ruff check app tests`，配置在 `pyproject.toml [tool.ruff]`）；golden 比对（`tests/golden/`，`PILLCLEAR_REGEN_GOLDEN=1` 重生成）；测试全程 mock，无真实网络/DB。
 
 ## Global Constraints
 
