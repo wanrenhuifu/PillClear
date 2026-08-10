@@ -118,9 +118,9 @@ def resolve_model(settings: Settings) -> str:
 
 
 __all__ = [
-    "ProviderPreset",
-    "PROVIDER_PRESETS",
     "KNOWN_PROVIDERS",
+    "PROVIDER_PRESETS",
+    "ProviderPreset",
     "resolve_api_key",
     "resolve_base_url",
     "resolve_model",

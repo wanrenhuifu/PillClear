@@ -5,7 +5,6 @@
 
 import pytest
 
-from app.config import Settings
 from app.knowledge.ingest import ingest_text
 from app.knowledge.parser import split_sections
 from app.knowledge.repository import InMemoryDrugRepository

@@ -8,7 +8,7 @@ import pytest
 from app.core.units import to_mg
 from app.knowledge.schemas import Ingredient
 from app.medbox.calculator import calculate_ingredient_totals, check_overlap
-from app.medbox.schemas import IngredientTotal, MedboxItem
+from app.medbox.schemas import MedboxItem
 
 
 class TestToMg:

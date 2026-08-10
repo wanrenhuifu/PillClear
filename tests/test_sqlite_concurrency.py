@@ -31,7 +31,7 @@ def _drug(i: int) -> DrugRecord:
 def test_shared_connection_without_lock_raises():
     """共享连接必须显式传共享锁：静默自建私有锁会复刻两锁一连接交错（code review #13 回归）。"""
     repo = SQLiteDrugRepository(":memory:")
-    with pytest.raises(ValueError, match="共享.*锁"):
+    with pytest.raises(ValueError, match=r"共享.*锁"):
         SQLiteUserMedboxRepository(repo.connection)
 
 
@@ -48,7 +48,7 @@ def test_shared_connection_concurrent_reads_and_writes():
                 # save_drug 走 BEGIN IMMEDIATE / COMMIT 多语句事务——
                 # 无锁时与读侧交错必然撕裂
                 repo.save_drug(_drug(i), [(f"章节{i % 3}", f"内容{i}", [])])
-        except Exception as exc:  # noqa: BLE001 - 收集一切并发异常供断言
+        except Exception as exc:
             errors.append(exc)
 
     def reader() -> None:
@@ -60,7 +60,7 @@ def test_shared_connection_concurrent_reads_and_writes():
                 medbox.upsert_item(uid, 1, (i % 3) + 1)
                 medbox.get_items(uid)
                 medbox.count_items(uid)
-        except Exception as exc:  # noqa: BLE001 - 收集一切并发异常供断言
+        except Exception as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=writer)]

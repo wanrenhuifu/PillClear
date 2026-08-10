@@ -6,6 +6,27 @@ import pytest
 from app.config import DEFAULT_MODEL, Settings
 from app.llm.providers import PROVIDER_PRESETS
 
+
+@pytest.fixture(autouse=True)
+def _isolate_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """清掉开发机进程级环境变量，保证套件与本机 .env / 系统变量无关。
+
+    `_env_file=None` 只挡住 .env 文件，挡不住已 export 的进程变量
+    （如 DEEPSEEK_API_KEY）——pydantic-settings 仍会从 os.environ 注入。
+    """
+    for name in (
+        "DEEPSEEK_API_KEY",
+        "LLM_API_KEY",
+        "LLM_PROVIDER",
+        "LLM_MODEL",
+        "LLM_BASE_URL",
+        "DATABASE_URL",
+        "PILLCLEAR_BACKEND",
+        "DATA_DIR",
+        "CORS_ORIGINS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
 # respx 拦截的目标 URL——改造后 llm_base_url 默认值为空字符串（由 provider preset
 # 解析），从 preset 推导以保持与默认厂牌一致，避免硬编码。
 DEEPSEEK_BASE_URL = PROVIDER_PRESETS["deepseek"].default_base_url

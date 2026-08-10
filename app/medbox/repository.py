@@ -101,7 +101,12 @@ class PostgresUserMedboxRepository:
     """
 
     def __init__(self, dsn: str) -> None:
-        import psycopg  # noqa: PLC0415
+        try:
+            import psycopg  # noqa: PLC0415
+        except ModuleNotFoundError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "Postgres 后端需要 psycopg，请先安装：pip install -e '.[postgres]'"
+            ) from exc
 
         self._conn = psycopg.connect(dsn, autocommit=True)
         self._lock = threading.RLock()
@@ -157,8 +162,8 @@ class PostgresUserMedboxRepository:
 
 
 __all__ = [
-    "UserMedboxRepository",
     "InMemoryUserMedboxRepository",
     "PostgresUserMedboxRepository",
+    "UserMedboxRepository",
     "placeholder_brand",
 ]

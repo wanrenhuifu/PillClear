@@ -25,7 +25,6 @@ from app.core.safety import check
 from app.knowledge.repository import DrugReader
 from app.knowledge.schemas import Citation
 from app.llm.client import LLMClient
-from app.llm.errors import LLMRetryExhausted
 from app.medbox.schemas import Medbox, MedboxItem
 from app.medbox.service import check_medbox
 from app.prompts.chat import build_chat_messages
@@ -133,7 +132,7 @@ def _classify_intent(llm_client: LLMClient, query: str) -> IntentResult:
             IntentResult,
             max_tokens=_INTENT_MAX_TOKENS,
         )
-    except Exception as exc:  # noqa: BLE001 - 分类失败必须降级而非阻断
+    except Exception as exc:
         logger.warning("意图分类失败，降级为 drug_info：%s", exc)
         return IntentResult(intent=IntentCategory.DRUG_INFO, confidence=0.0)
 
@@ -281,7 +280,7 @@ def _effective_drug_names(
     llm_names = _dedup_stripped(intent.drug_names)
     try:
         scan_names, ambiguous = _scan_brand_names(query, drug_repo.list_drugs())
-    except Exception:  # noqa: BLE001 - 扫描是增强，失败不得阻断
+    except Exception:
         logger.warning("品牌名扫描失败，降级为空名单", exc_info=True)
         scan_names, ambiguous = [], []
     # 规范映射：近似匹配 (term→stored) 与精确命中 (name→name) 都用于收敛 LLM 名

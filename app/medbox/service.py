@@ -124,4 +124,4 @@ def check_medbox(
     )
 
 
-__all__ = ["MedboxService", "check_medbox", "add_item", "remove_item"]
+__all__ = ["MedboxService", "add_item", "check_medbox", "remove_item"]

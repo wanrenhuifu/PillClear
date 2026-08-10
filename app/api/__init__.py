@@ -3,4 +3,4 @@
 from app.api.medbox_routes import router as medbox_router
 from app.api.routes import router
 
-__all__ = ["router", "medbox_router"]
+__all__ = ["medbox_router", "router"]

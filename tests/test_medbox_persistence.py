@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import (
     get_drug_repository,
-    get_rule_set,
     get_settings,
     get_user_medbox_repository,
 )
@@ -163,7 +162,7 @@ class TestMedboxServicePersistence:
         """持久化药箱可直接喂给 check_medbox（D4 链路复用）。"""
         drugs = _seed_drug_repo()
         user_repo = InMemoryUserMedboxRepository(brands=_brands())
-        from app.rules.engine import load_rules, DEFAULT_RULES_DIR
+        from app.rules.engine import DEFAULT_RULES_DIR, load_rules
 
         service = MedboxService(user_repo)
         service.add_to_medbox("dev", MedboxItem(drug_id=1, brand_name="泰诺", dosage_per_day=3))

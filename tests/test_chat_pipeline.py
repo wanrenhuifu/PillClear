@@ -24,7 +24,6 @@ from app.prompts.intent import IntentCategory, IntentResult
 from app.prompts.safety import SafetyLLMResult
 from app.rules.engine import DEFAULT_RULES_DIR, load_rules
 
-
 # ── fakes ───────────────────────────────────────────────────
 
 
@@ -43,7 +42,7 @@ class FakeLLM:
         self.calls = 0
         self.answer_messages: list[dict] | None = None
 
-    def complete_json(self, messages, schema, **kwargs):  # noqa: ARG002
+    def complete_json(self, messages, schema, **kwargs):
         self.calls += 1
         if schema is SafetyLLMResult:
             return self._safety
@@ -62,7 +61,7 @@ class FakeRetriever:
         self.canned = canned or {}
         self.terms: list[str] = []
 
-    def search(self, query: str, limit: int = 5) -> list[Citation]:  # noqa: ARG002
+    def search(self, query: str, limit: int = 5) -> list[Citation]:
         self.terms.append(query)
         return list(self.canned.get(query, []))
 

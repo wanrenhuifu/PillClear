@@ -13,8 +13,8 @@ from app.prompts.chat import (
     build_system_prompt,
 )
 from app.prompts.formatters import (
-    format_citations_for_prompt,
     format_check_report_for_prompt,
+    format_citations_for_prompt,
 )
 from app.prompts.ingest import INGREDIENT_SYSTEM_PROMPT
 from app.prompts.intent import (
@@ -29,15 +29,15 @@ from app.prompts.safety import (
 )
 
 __all__ = [
-    "IntentCategory",
-    "IntentResult",
-    "build_chat_messages",
-    "build_intent_messages",
-    "build_system_prompt",
-    "format_citations_for_prompt",
-    "format_check_report_for_prompt",
     "INGREDIENT_SYSTEM_PROMPT",
     "SAFETY_CLASSIFY_SYSTEM_PROMPT",
+    "IntentCategory",
+    "IntentResult",
     "SafetyLLMResult",
+    "build_chat_messages",
+    "build_intent_messages",
     "build_safety_messages",
+    "build_system_prompt",
+    "format_check_report_for_prompt",
+    "format_citations_for_prompt",
 ]

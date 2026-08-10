@@ -11,9 +11,11 @@ PgVectorRetriever 接替：按余弦近邻检索 insert_chunks，返回说明书
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
-from typing import Any, Callable, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
 from app.knowledge.embedder import Embedder
 from app.knowledge.schemas import Citation
@@ -38,8 +40,13 @@ def _default_connect(dsn: str) -> Any:
     延迟导入 psycopg / pgvector，未安装或未配置 DATABASE_URL 时不影响其余模块导入
     （同 PostgresDrugRepository 模式）。
     """
-    import psycopg  # noqa: PLC0415
-    from pgvector.psycopg import register_vector  # noqa: PLC0415
+    try:
+        import psycopg  # noqa: PLC0415
+        from pgvector.psycopg import register_vector  # noqa: PLC0415
+    except ModuleNotFoundError as exc:  # pragma: no cover
+        raise RuntimeError(
+            "Postgres 后端需要 psycopg + pgvector，请先安装：pip install -e '.[postgres]'"
+        ) from exc
 
     conn = psycopg.connect(dsn, autocommit=True)
     register_vector(conn)
@@ -122,10 +129,8 @@ class PgVectorRetriever:
         with self._lock:
             conn, self._conn = self._conn, None
         if conn is not None:
-            try:
+            with contextlib.suppress(Exception):
                 conn.close()
-            except Exception:  # noqa: BLE001 坏连接关闭失败无需处理
-                pass
 
 
-__all__ = ["Retriever", "NullRetriever", "PgVectorRetriever"]
+__all__ = ["NullRetriever", "PgVectorRetriever", "Retriever"]

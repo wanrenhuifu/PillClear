@@ -126,7 +126,7 @@ def ingest_directory(
         try:
             text = path.read_text(encoding="utf-8")
             ingest_text(brand_name, text, llm=llm, embedder=embedder, repo=repo)
-        except Exception as exc:  # noqa: BLE001 - 单文件失败不得中断其余文件
+        except Exception as exc:
             logger.error(
                 "入库失败「%s」：%s: %s", brand_name, type(exc).__name__, exc
             )
@@ -181,7 +181,7 @@ def main() -> None:
         llm = LLMClient(settings)
     else:
         # 默认 SQLite 本地后端（无需 DATABASE_URL，无需 embedding）。
-        from app.knowledge.sqlite_repo import SQLiteDrugRepository
+        from app.knowledge.sqlite_repo import SQLiteDrugRepository  # noqa: PLC0415
 
         db_path = str(settings.resolved_data_dir() / "pillclear.db")
         repo = SQLiteDrugRepository(db_path)

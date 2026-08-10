@@ -5,9 +5,9 @@ from app.rag.retriever import NullRetriever, PgVectorRetriever, Retriever
 from app.rag.sqlite_retriever import SQLiteVectorRetriever
 
 __all__ = [
-    "Retriever",
+    "KeywordRetriever",
     "NullRetriever",
     "PgVectorRetriever",
+    "Retriever",
     "SQLiteVectorRetriever",
-    "KeywordRetriever",
 ]

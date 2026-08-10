@@ -121,8 +121,13 @@ class PostgresDrugRepository:
     """
 
     def __init__(self, dsn: str) -> None:
-        import psycopg  # noqa: PLC0415
-        from pgvector.psycopg import register_vector  # noqa: PLC0415
+        try:
+            import psycopg  # noqa: PLC0415
+            from pgvector.psycopg import register_vector  # noqa: PLC0415
+        except ModuleNotFoundError as exc:  # pragma: no cover
+            raise RuntimeError(
+                "Postgres 后端需要 psycopg + pgvector，请先安装：pip install -e '.[postgres]'"
+            ) from exc
 
         self._conn = psycopg.connect(dsn, autocommit=True)
         self._lock = threading.RLock()
@@ -168,15 +173,14 @@ class PostgresDrugRepository:
             return cur.fetchone()[0]
 
     def replace_chunks(self, drug_id: int, chunks: list[ChunkRow]) -> None:
-        with self._lock, self._conn.transaction():
-            with self._conn.cursor() as cur:
-                cur.execute("delete from insert_chunks where drug_id = %s", (drug_id,))
-                if chunks:
-                    cur.executemany(
-                        "insert into insert_chunks (drug_id, section, content, embedding)"
-                        " values (%s, %s, %s, %s)",
-                        [(drug_id, s, c, e) for s, c, e in chunks],
-                    )
+        with self._lock, self._conn.transaction(), self._conn.cursor() as cur:
+            cur.execute("delete from insert_chunks where drug_id = %s", (drug_id,))
+            if chunks:
+                cur.executemany(
+                    "insert into insert_chunks (drug_id, section, content, embedding)"
+                    " values (%s, %s, %s, %s)",
+                    [(drug_id, s, c, e) for s, c, e in chunks],
+                )
 
     def save_drug(self, record: DrugRecord, chunks: list[ChunkRow]) -> int:
         # 同一事务内 upsert + 重写 chunks：要么一起成功，要么一起回滚，
@@ -209,22 +213,22 @@ class PostgresDrugRepository:
             if row is None:
                 return None
             cols = [desc[0] for desc in cur.description]
-            return dict(zip(cols, row))
+            return dict(zip(cols, row, strict=True))
 
     def list_drugs(self) -> list[dict[str, Any]]:
         with self._lock, self._conn.cursor() as cur:
             cur.execute("select id, brand_name, generic_name from drugs order by id")
             return [
-                dict(zip(("id", "brand_name", "generic_name"), row))
+                dict(zip(("id", "brand_name", "generic_name"), row, strict=True))
                 for row in cur.fetchall()
             ]
 
 
 __all__ = [
-    "DrugWriter",
+    "ChunkRow",
     "DrugReader",
     "DrugRepository",  # 向后兼容：= DrugWriter
+    "DrugWriter",
     "InMemoryDrugRepository",
     "PostgresDrugRepository",
-    "ChunkRow",
 ]

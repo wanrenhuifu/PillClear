@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 from app.knowledge.schemas import DrugRecord
 
@@ -62,6 +63,16 @@ _SCHEMA_STATEMENTS: tuple[str, ...] = (
         dosage_per_day integer,
         added_at text not null default (datetime('now')),
         unique(user_id, drug_id)
+    )
+    """,
+    """
+    create table if not exists user_reminders (
+        id integer primary key autoincrement,
+        user_id integer not null references users(id) on delete cascade,
+        drug_id integer not null references drugs(id) on delete cascade,
+        time_of_day text not null,
+        created_at text not null default (datetime('now')),
+        unique(user_id, drug_id, time_of_day)
     )
     """,
 )
@@ -206,7 +217,7 @@ class SQLiteDrugRepository:
             if row is None:
                 return None
             cols = [d[0] for d in cur.description]
-            data = dict(zip(cols, row))
+            data = dict(zip(cols, row, strict=True))
             data["ingredients"] = json.loads(data["ingredients"])
             return data
 
@@ -216,9 +227,9 @@ class SQLiteDrugRepository:
                 "select id, brand_name, generic_name from drugs order by id"
             )
             return [
-                dict(zip(("id", "brand_name", "generic_name"), row))
+                dict(zip(("id", "brand_name", "generic_name"), row, strict=True))
                 for row in cur.fetchall()
             ]
 
 
-__all__ = ["SQLiteDrugRepository", "open_sqlite", "init_schema", "ChunkRow"]
+__all__ = ["ChunkRow", "SQLiteDrugRepository", "init_schema", "open_sqlite"]

@@ -5,15 +5,12 @@ SQLiteUserMedboxRepository 三件套契约。
 检索走关键词精确匹配，无 embedding 依赖。
 """
 
-import logging
 
-import pytest
 
 from app.knowledge.schemas import DrugRecord, Ingredient
 from app.knowledge.sqlite_repo import SQLiteDrugRepository
 from app.medbox.sqlite_medbox_repo import SQLiteUserMedboxRepository
 from app.rag.keyword_retriever import KeywordRetriever
-
 
 # dummy embedding — ChunkRow 类型第 3 位（SQLite 路径忽略，仅为类型兼容）
 _NO_EMBEDDING: list[float] = []

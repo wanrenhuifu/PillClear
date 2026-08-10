@@ -11,11 +11,11 @@ from app.llm.providers import (
 )
 
 __all__ = [
+    "PROVIDER_PRESETS",
     "LLMClient",
     "LLMError",
     "LLMRetryExhausted",
     "ProviderPreset",
-    "PROVIDER_PRESETS",
     "resolve_api_key",
     "resolve_base_url",
     "resolve_model",

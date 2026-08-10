@@ -58,11 +58,11 @@ class RuleSet(BaseModel):
 
 
 __all__ = [
-    "RuleSeverity",
-    "RuleConfidence",
     "IngredientCondition",
-    "SubstanceCondition",
-    "RuleConditions",
     "Rule",
+    "RuleConditions",
+    "RuleConfidence",
     "RuleSet",
+    "RuleSeverity",
+    "SubstanceCondition",
 ]

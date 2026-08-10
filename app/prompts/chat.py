@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING
 
 from app.prompts.formatters import format_citations_for_prompt
 from app.prompts.templates.chat_system import (
+    _SYSTEM_ROLE_AND_RULES,
     AMBIGUITY_SECTION_HEADER,
     CHECK_RELAY_REQUIREMENTS,
     CHECK_SECTION_HEADER,
     RAG_SECTION_HEADER,
-    _SYSTEM_ROLE_AND_RULES,
 )
 
 if TYPE_CHECKING:

@@ -123,9 +123,9 @@ def resolve_embedding_model(settings: Settings) -> str:
 
 
 __all__ = [
-    "EmbeddingProviderPreset",
     "EMBEDDING_PROVIDER_PRESETS",
     "KNOWN_EMBEDDING_PROVIDERS",
+    "EmbeddingProviderPreset",
     "resolve_embedding_api_key",
     "resolve_embedding_base_url",
     "resolve_embedding_model",

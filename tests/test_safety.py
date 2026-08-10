@@ -4,7 +4,6 @@
 并验证急症相对特殊人群的优先级。
 """
 
-import pytest
 
 from app.core.safety import (
     BoundaryCategory,

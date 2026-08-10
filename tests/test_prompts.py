@@ -16,18 +16,17 @@ from app.prompts.chat import (
     build_chat_messages,
     build_system_prompt,
 )
+from app.prompts.formatters import (
+    format_check_report_for_prompt,
+    format_citations_for_prompt,
+)
 from app.prompts.intent import (
     IntentCategory,
     IntentResult,
     build_intent_messages,
 )
-from app.prompts.formatters import (
-    format_citations_for_prompt,
-    format_check_report_for_prompt,
-)
 from app.prompts.safety import SafetyLLMResult, build_safety_messages
 from app.rules.schemas import IngredientCondition, Rule, RuleConditions
-
 
 # ── 样例数据 ────────────────────────────────────────────────
 

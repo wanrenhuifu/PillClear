@@ -7,12 +7,12 @@ RAG 检索策略与是否触发确定性药箱检查。意图分类是「路由�
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
 
-class IntentCategory(str, Enum):
+class IntentCategory(StrEnum):
     """用户问题意图分类。"""
 
     DRUG_INFO = "drug_info"  # 药品说明书查询：成分、用法、副作用等

@@ -15,11 +15,10 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import get_drug_repository, get_retriever
 from app.config import Settings
-from app.rag import NullRetriever
 from app.knowledge.repository import InMemoryDrugRepository
 from app.knowledge.schemas import DrugRecord, Ingredient
+from app.rag import NullRetriever
 from tests.conftest import DEEPSEEK_URL, make_completion
-
 
 # ── 三次 LLM 调用的响应构造器 ───────────────────────────────
 
@@ -84,8 +83,8 @@ def last_system_prompt(respx_mock) -> str:
 @pytest.fixture
 def app_with_test_settings(settings: Settings):
     """用测试 Settings 创建 app（覆盖 .env 的 API key）。"""
-    from app.main import create_app
     from app.api.deps import get_settings
+    from app.main import create_app
 
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: settings

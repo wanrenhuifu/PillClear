@@ -105,7 +105,8 @@ class LLMClient:
             if not response.choices:
                 last_error = ValueError("API 返回空 choices 列表")
                 logger.warning("LLM 响应异常，准备重试：%s", last_error)
-                conversation = conversation + [
+                conversation = [
+                    *conversation,
                     {"role": "assistant", "content": ""},
                     {
                         "role": "user",
@@ -121,7 +122,8 @@ class LLMClient:
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = exc
                 logger.warning("LLM 响应解析/校验失败，准备重试：%s", exc)
-                conversation = conversation + [
+                conversation = [
+                    *conversation,
                     {"role": "assistant", "content": content},
                     {
                         "role": "user",

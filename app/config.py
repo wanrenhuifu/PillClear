@@ -106,7 +106,7 @@ class Settings(BaseSettings):
         return Path(self.data_dir) if self.data_dir else default_data_dir()
 
     @model_validator(mode="after")
-    def _reject_deepseek_deprecated_models(self) -> "Settings":
+    def _reject_deepseek_deprecated_models(self) -> Settings:
         """仅当使用 DeepSeek 厂牌时，拒绝已废弃的旧模型名。"""
         if self.llm_provider == "deepseek" and self.llm_model in DEPRECATED_MODELS:
             raise ValueError(

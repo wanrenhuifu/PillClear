@@ -171,9 +171,9 @@ def match_and_render(
 
 __all__ = [
     "DEFAULT_RULES_DIR",
-    "load_rules",
     "count_matches",
-    "match_rules",
     "format_warning",
+    "load_rules",
     "match_and_render",
+    "match_rules",
 ]

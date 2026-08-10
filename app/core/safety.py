@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from app.prompts.safety import SafetyLLMResult, build_safety_messages
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("app.core.safety")
 
 
-class BoundaryCategory(str, Enum):
+class BoundaryCategory(StrEnum):
     """越界问题分类。NONE 表示未触发边界，可正常放行。"""
 
     EMERGENCY = "emergency"
@@ -179,10 +179,7 @@ def _is_negated(text: str, idx: int) -> bool:
 
 def _any_keyword_match(text: str, alt_re: re.Pattern[str]) -> bool:
     """交替正则匹配，跳过否定语境中的命中。"""
-    for m in alt_re.finditer(text):
-        if not _is_negated(text, m.start()):
-            return True
-    return False
+    return any(not _is_negated(text, m.start()) for m in alt_re.finditer(text))
 
 
 def _any_pattern_match(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool:
@@ -256,7 +253,7 @@ def _classify_boundary_with_llm(text: str, llm: LLMClient) -> BoundaryResult:
             SafetyLLMResult,
             max_tokens=_LLM_MAX_TOKENS,
         )
-    except Exception as exc:  # noqa: BLE001 - LLM 失败必须降级，不得阻断 /chat
+    except Exception as exc:
         logger.warning("safety LLM 分类失败，降级到关键词结果（放行）：%s", exc)
         return BoundaryResult(
             category=BoundaryCategory.NONE, blocked=False, message=None

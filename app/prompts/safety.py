@@ -67,7 +67,7 @@ def build_safety_messages(query: str) -> list[dict[str, str]]:
 
 
 __all__ = [
-    "SafetyLLMResult",
     "SAFETY_CLASSIFY_SYSTEM_PROMPT",
+    "SafetyLLMResult",
     "build_safety_messages",
 ]

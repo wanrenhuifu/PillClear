@@ -30,7 +30,7 @@ class SQLiteUserMedboxRepository:
 
     def __init__(
         self,
-        db_path_or_connection: "str | sqlite3.Connection" = ":memory:",
+        db_path_or_connection: str | sqlite3.Connection = ":memory:",
         *,
         lock: threading.RLock | None = None,
     ) -> None:

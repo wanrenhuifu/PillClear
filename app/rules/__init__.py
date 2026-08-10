@@ -19,15 +19,15 @@ from app.rules.schemas import (
 
 __all__ = [
     "DEFAULT_RULES_DIR",
-    "load_rules",
-    "match_rules",
-    "count_matches",
-    "format_warning",
-    "match_and_render",
     "IngredientCondition",
-    "SubstanceCondition",
-    "RuleConditions",
     "Rule",
+    "RuleConditions",
     "RuleSet",
     "RuleSeverity",
+    "SubstanceCondition",
+    "count_matches",
+    "format_warning",
+    "load_rules",
+    "match_and_render",
+    "match_rules",
 ]
