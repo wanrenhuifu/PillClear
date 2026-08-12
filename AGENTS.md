@@ -34,7 +34,7 @@ cd web && npx vitest run               # 前端测试
 
 Windows 一键启动：`start.bat`（同时拉起前后端）。
 
-**Lint 只有 ruff**（无 black/mypy/pre-commit），配置在 `pyproject.toml [tool.ruff]`：select F/E/W/I/UP/B/SIM/PLC/RUF；`RUF001-003`（中文标点误报）已 ignore；FastAPI `Depends/Query/Path` 已豁免 B008。提交前跑 `ruff check app tests`。GitHub Actions CI（`.github/workflows/ci.yml`）跑 ruff + pytest + 前端 vitest + build。
+**Lint 只有 ruff**（无 black/mypy/pre-commit 框架；仅原生 git pre-commit 钩子，见「改动后的最小验证」），配置在 `pyproject.toml [tool.ruff]`：select F/E/W/I/UP/B/SIM/PLC/RUF；`RUF001-003`（中文标点误报）已 ignore；FastAPI `Depends/Query/Path` 已豁免 B008。提交前跑 `ruff check app tests`。GitHub Actions CI（`.github/workflows/ci.yml`）跑 ruff + pytest + 前端 vitest + build。
 
 ### 改动后的最小验证（每次必做）
 
@@ -44,7 +44,7 @@ Windows 一键启动：`start.bat`（同时拉起前后端）。
 2. 通过后按需跑全量 `pytest`（基线 405，低于基线立即排查）；
 3. golden 文案变红（`tests/test_prompts_golden.py`）= 行为变更，先确认是有意改动，再按下方「Golden 测试重新生成」流程处理，**严禁悄悄改测试凑绿**。
 
-不引入新工具、不改业务代码；验证就是上面已有的 pytest + golden 流程。
+不引入新工具、不改业务代码；验证就是上面已有的 pytest + golden 流程。本地 git pre-commit 钩子已把该验证接成提交前必过项（克隆后跑一次 `python scripts/install_hooks.py` 安装；逻辑在 `scripts/pre_commit_check.py`，随版本库更新）：自动跑 staged 改动映射出的受影响测试文件 + `ruff check app tests`，任一失败即阻断提交；无法映射时才回退全量。
 
 ### Golden 测试重新生成
 
