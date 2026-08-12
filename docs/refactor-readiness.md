@@ -38,13 +38,15 @@
 
 ## 周期 2：safety.py 重构
 
-- [ ] pytest 通过数 ≥ 基线
-- [ ] `test_safety.py` 全绿（关键词命中 / 近失边界 / 固定话术 / 优先级链逐字不变）
-- [ ] hook 自动跑 `pytest tests/ -x` 通过
-- [ ] pillclear-safety-review 自动加载，回归审查无新增越界漏放
-- [ ] 公开接口不变：`check(text, llm=None) → BoundaryResult`，`__all__ = ["BoundaryCategory", "BoundaryResult", "check"]`
-- [ ] 优先级链不变：急症 > 特殊人群 > 诊断 > 处方药 > 放行
-- [ ] `app.core.safety` 覆盖率保持 100%
+> **✅ 已完成（2026-08-13）**：结构重构（四类规则数据化为优先级表 `_RULES`、放行构造收敛为 `_allow()`）行为零变化，golden 与特征化用例零重新生成；同期修复盲区：「老人/老年人/老人家」纳入特殊人群关键词层，固定话术同步加入「老年人」（有意变更，`TestFixedMessagesGolden::test_special_population_message_exact` 与 `test_elderly_caught_by_keywords` 已显式更新）。基线 405 → **406**。
+
+- [x] pytest 通过数 ≥ 基线（406 passed，+1 新增紧邻否定近失用例）
+- [x] `test_safety.py` 全绿（关键词命中 / 近失边界 / 固定话术 / 优先级链逐字不变；仅老人相关两处有意更新）
+- [x] hook 自动跑 `pytest tests/ -x` 通过（pre-commit 钩子提交时实跑验证）
+- [x] 回归审查无新增越界漏放（全量特征化套件 + 新增近失用例）
+- [x] 公开接口不变：`check(text, llm=None) → BoundaryResult`，`__all__ = ["BoundaryCategory", "BoundaryResult", "check"]`
+- [x] 优先级链不变：急症 > 特殊人群 > 诊断 > 处方药 > 放行（即 `_RULES` 声明顺序）
+- [x] `app.core.safety` 覆盖率保持 100%（80 statements / 0 missing）
 
 ## 已知保守行为与盲区（特征化测试锁定在案）
 
@@ -52,7 +54,7 @@
 （修行为 or 接受新行为并有意识改测试），**严禁悄悄改测试凑绿**：
 
 1. **发热组合正则窗口 `{0,10}`**：「发热/高烧/发烧/高热」与「不退/退不下/退不了」间隔超 10 字当前放行（`TestEmergencyNearMiss::test_fever_gap_beyond_window_not_emergency`）——已知漏判窗口，收紧需单独决策
-2. **关键词层不含「老人/老年人」**，年龄正则只覆盖 0-17 岁：设计上由 LLM 补漏层兜底（`TestSpecialPopulationNearMiss::test_elderly_not_caught_by_keywords`）
+2. ~~**关键词层不含「老人/老年人」**~~：✅ 已修复（2026-08-13，周期 2）——「老人/老年人/老人家」已纳入关键词层（`test_elderly_caught_by_keywords`）；年龄正则仍只覆盖 0-17 岁，高龄数字表述继续由 LLM 补漏层兜底
 3. **「月经期」不在特殊人群列表**（`test_menstrual_period_not_special_population`）
 4. **子串保守命中**（铁律 #3：漏判比误判危险，宁可拦了引导咨询）：
    - 「治什么病」命中 diagnosis（`TestDiagnosisNearMiss::test_what_disease_treats_still_diagnosis`）

@@ -373,10 +373,16 @@ class TestSpecialPopulationNearMiss:
         assert r.blocked is False
         assert r.category is BoundaryCategory.NONE
 
-    def test_elderly_not_caught_by_keywords(self):
-        # 特征化已知盲区：「老人/老年人」不在关键词表，年龄正则只覆盖 0-17 岁，
-        # 关键词层放行；设计上由 LLM 补漏层兜底（safety prompt 里列了老人）。
+    def test_elderly_caught_by_keywords(self):
+        # 盲区修复（周期 2）：「老人/老年人/老人家」已纳入关键词层，
+        # 不再只靠 LLM 补漏层兜底（LLM 调用失败时会漏拦）。
         r = check("70岁老人吃这个药要注意什么")
+        assert r.blocked is True
+        assert r.category is BoundaryCategory.SPECIAL_POPULATION
+
+    def test_elderly_negated_passes(self):
+        # 紧邻否定语义不变：「不是老人」被紧邻其前的否定词放行。
+        r = check("不是老人，就是普通成年人")
         assert r.blocked is False
         assert r.category is BoundaryCategory.NONE
 
@@ -439,7 +445,7 @@ class TestFixedMessagesGolden:
     def test_special_population_message_exact(self):
         r = check("孕妇能吃这个药吗")
         assert r.message == (
-            "⚠️ 孕妇、哺乳期、儿童以及有慢性病的人群用药风险特殊，"
+            "⚠️ 孕妇、哺乳期、儿童、老年人以及有慢性病的人群用药风险特殊，"
             "我没法给出个性化建议。\n"
             "请当面咨询医生或药师，让专业人士结合具体情况判断，别自己拿主意。"
         )

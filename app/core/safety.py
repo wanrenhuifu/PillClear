@@ -57,7 +57,7 @@ _MESSAGES: dict[BoundaryCategory, str] = {
         "我只是用药安全助手，处理不了紧急情况，你的安全最重要。"
     ),
     BoundaryCategory.SPECIAL_POPULATION: (
-        "⚠️ 孕妇、哺乳期、儿童以及有慢性病的人群用药风险特殊，"
+        "⚠️ 孕妇、哺乳期、儿童、老年人以及有慢性病的人群用药风险特殊，"
         "我没法给出个性化建议。\n"
         "请当面咨询医生或药师，让专业人士结合具体情况判断，别自己拿主意。"
     ),
@@ -107,6 +107,9 @@ _SPECIAL_POPULATION_KEYWORDS: tuple[str, ...] = (
     "婴儿",
     "婴幼儿",
     "宝宝",
+    "老人",
+    "老年人",
+    "老人家",
     "高血压",
     "糖尿病",
     "冠心病",
@@ -163,10 +166,29 @@ def _build_alt_re(keywords: tuple[str, ...]) -> re.Pattern[str]:
     sorted_kw = sorted(keywords, key=len, reverse=True)
     return re.compile("|".join(re.escape(kw) for kw in sorted_kw))
 
-_EMERGENCY_KW_RE = _build_alt_re(_EMERGENCY_KEYWORDS)
-_SPECIAL_POPULATION_KW_RE = _build_alt_re(_SPECIAL_POPULATION_KEYWORDS)
-_DIAGNOSIS_KW_RE = _build_alt_re(_DIAGNOSIS_KEYWORDS)
-_PRESCRIPTION_KW_RE = _build_alt_re(_PRESCRIPTION_KEYWORDS)
+
+# ── 规则表（四类规则数据化，按固定优先级顺序遍历）──────────────
+
+@dataclass(frozen=True)
+class _Rule:
+    """单类越界规则：关键词交替正则 + 组合模式正则。"""
+
+    category: BoundaryCategory
+    keyword_re: re.Pattern[str]
+    patterns: tuple[re.Pattern[str], ...]
+
+
+# 顺序即优先级：急症 > 特殊人群 > 诊断 > 处方药（儿童年龄正则挂在特殊人群）。
+_RULES: tuple[_Rule, ...] = (
+    _Rule(BoundaryCategory.EMERGENCY, _build_alt_re(_EMERGENCY_KEYWORDS), _EMERGENCY_PATTERNS),
+    _Rule(
+        BoundaryCategory.SPECIAL_POPULATION,
+        _build_alt_re(_SPECIAL_POPULATION_KEYWORDS),
+        (_CHILD_AGE_RE,),
+    ),
+    _Rule(BoundaryCategory.DIAGNOSIS, _build_alt_re(_DIAGNOSIS_KEYWORDS), ()),
+    _Rule(BoundaryCategory.PRESCRIPTION, _build_alt_re(_PRESCRIPTION_KEYWORDS), ()),
+)
 
 
 def _is_negated(text: str, idx: int) -> bool:
@@ -194,27 +216,26 @@ def _any_pattern_match(text: str, patterns: tuple[re.Pattern[str], ...]) -> bool
 def _detect_category(text: str) -> BoundaryCategory:
     """判定文本所属的越界分类（私有实现）。
 
-    优先级：急症 > 特殊人群 > 诊断 > 处方药 > 放行(NONE)。
-    急症最高优先级，确保"孕妇 + 呼吸困难"等复合场景优先提示就医。
+    优先级：急症 > 特殊人群 > 诊断 > 处方药 > 放行(NONE)，
+    即 _RULES 的声明顺序；急症最高优先级，
+    确保"孕妇 + 呼吸困难"等复合场景优先提示就医。
 
     否定检测：关键词紧邻中文否定词时跳过该命中，
     避免"我没有呼吸困难""不是处方药"等误判；
     普通词里嵌的单字（不错 / 特别）不构成否定。
     """
 
-    if _any_keyword_match(text, _EMERGENCY_KW_RE) or _any_pattern_match(
-        text, _EMERGENCY_PATTERNS
-    ):
-        return BoundaryCategory.EMERGENCY
-    if _any_keyword_match(text, _SPECIAL_POPULATION_KW_RE) or _any_pattern_match(
-        text, (_CHILD_AGE_RE,)
-    ):
-        return BoundaryCategory.SPECIAL_POPULATION
-    if _any_keyword_match(text, _DIAGNOSIS_KW_RE):
-        return BoundaryCategory.DIAGNOSIS
-    if _any_keyword_match(text, _PRESCRIPTION_KW_RE):
-        return BoundaryCategory.PRESCRIPTION
+    for rule in _RULES:
+        if _any_keyword_match(text, rule.keyword_re) or _any_pattern_match(
+            text, rule.patterns
+        ):
+            return rule.category
     return BoundaryCategory.NONE
+
+
+def _allow() -> BoundaryResult:
+    """放行结果（NONE / 不拦截），收敛关键词与 LLM 回落的多处相同构造。"""
+    return BoundaryResult(category=BoundaryCategory.NONE, blocked=False, message=None)
 
 
 def _check_boundary_keywords(text: str) -> BoundaryResult:
@@ -222,7 +243,7 @@ def _check_boundary_keywords(text: str) -> BoundaryResult:
 
     category = _detect_category(text or "")
     if category is BoundaryCategory.NONE:
-        return BoundaryResult(category=category, blocked=False, message=None)
+        return _allow()
     return BoundaryResult(
         category=category, blocked=True, message=_MESSAGES[category]
     )
@@ -255,24 +276,18 @@ def _classify_boundary_with_llm(text: str, llm: LLMClient) -> BoundaryResult:
         )
     except Exception as exc:
         logger.warning("safety LLM 分类失败，降级到关键词结果（放行）：%s", exc)
-        return BoundaryResult(
-            category=BoundaryCategory.NONE, blocked=False, message=None
-        )
+        return _allow()
 
     # 非法 category 字符串 → 回落到 NONE（不得因模型乱报而误拦）
     try:
         category = BoundaryCategory(result.category)
     except ValueError:
         logger.warning("safety LLM 返回非法分类 %r，降级放行", result.category)
-        return BoundaryResult(
-            category=BoundaryCategory.NONE, blocked=False, message=None
-        )
+        return _allow()
 
     # none 或低置信度 → 以关键词结果（NONE）为准
     if category is BoundaryCategory.NONE or result.confidence < _LLM_CONFIDENCE_THRESHOLD:
-        return BoundaryResult(
-            category=BoundaryCategory.NONE, blocked=False, message=None
-        )
+        return _allow()
 
     # 高置信度命中越界类别 → 回落到固定话术（铁律 #3）
     return BoundaryResult(category=category, blocked=True, message=_MESSAGES[category])

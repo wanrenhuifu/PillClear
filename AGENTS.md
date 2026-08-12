@@ -17,7 +17,7 @@ This file provides guidance to Lingma (lingma.aliyun.com) when working with code
 ```bash
 pip install -e ".[dev]"          # 安装依赖（Python 3.12+）
 
-pytest                            # 全部测试（基线 405，低于基线立即排查）
+pytest                            # 全部测试（基线 406，低于基线立即排查）
 pytest tests/test_ingest.py       # 单个测试文件
 pytest tests/test_ingest.py::test_ingest_is_idempotent   # 单个用例
 
@@ -41,7 +41,7 @@ Windows 一键启动：`start.bat`（同时拉起前后端）。
 **每次完成代码改动后**，在交付/提交前必须运行：
 
 1. 先跑受影响的测试文件，例如 `pytest tests/test_chat_pipeline.py`（替换为实际受影响的文件）；
-2. 通过后按需跑全量 `pytest`（基线 405，低于基线立即排查）；
+2. 通过后按需跑全量 `pytest`（基线 406，低于基线立即排查）；
 3. golden 文案变红（`tests/test_prompts_golden.py`）= 行为变更，先确认是有意改动，再按下方「Golden 测试重新生成」流程处理，**严禁悄悄改测试凑绿**。
 
 不引入新工具、不改业务代码；验证就是上面已有的 pytest + golden 流程。本地 git pre-commit 钩子已把该验证接成提交前必过项（克隆后跑一次 `python scripts/install_hooks.py` 安装；逻辑在 `scripts/pre_commit_check.py`，随版本库更新）：自动跑 staged 改动映射出的受影响测试文件 + `ruff check app tests`，任一失败即阻断提交；无法映射时才回退全量。
