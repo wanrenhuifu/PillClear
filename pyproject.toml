@@ -11,7 +11,9 @@ dependencies = [
     "fastapi>=0.110",
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
-    "openai>=1.30",
+    # openai 3.0 迁到 httpx2，respx（测试全程靠它拦截 HTTP）拦不住，
+    # 会导致套件真打网络；待 respx 适配 httpx2 后再放开上限。
+    "openai>=1.30,<3",
     "pyyaml>=6.0",
 ]
 # 默认 SQLite 路径零外部依赖；psycopg + pgvector 仅 Postgres 路径需要，
