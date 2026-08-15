@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+build/
+dist/
 .pytest_cache/
 .mypy_cache/
 .coverage
@@ -17,6 +19,7 @@ htmlcov/
 .idea/
 .vscode/
 .qoder/
+.zcode/
 
 # Claude Code 本地配置（不入仓库）
 .claude/settings.local.json

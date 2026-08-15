@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     pillclear_backend: str = ""
     # SQLite 数据目录："" 时按平台自动解析（见 default_data_dir）。
     data_dir: str = ""
+    # 前端构建产物目录（如 web/dist）："" = 不服务静态文件（开发默认）；
+    # 非空 = create_app 挂 SPA 同源服务（部署路径，见 Dockerfile）。
+    static_dir: str = ""
 
     # CORS 允许来源(逗号分隔)。空串 = 不挂 CORS 中间件。
     # 默认放行 Vite 开发服务器;部署时按实际域名覆盖。

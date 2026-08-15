@@ -24,6 +24,7 @@ def _isolate_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "PILLCLEAR_BACKEND",
         "DATA_DIR",
         "CORS_ORIGINS",
+        "STATIC_DIR",
     ):
         monkeypatch.delenv(name, raising=False)
 

@@ -1,0 +1,41 @@
+# 密钥与本地状态绝不进镜像
+.env
+*.db
+*.db-wal
+*.db-shm
+# 种子库例外：随镜像预置，云平台免 ingest 开箱即用
+!seed/pillclear.db
+
+# 版本库与 IDE
+.git
+.gitignore
+.qoder
+.claude
+.agents
+.scratch
+
+# Python 产物（镜像内从源码重装）
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+pillclear.egg-info
+
+# 前端：镜像内构建，本地产物不带入
+web/node_modules
+web/dist
+
+# 测试与文档不参与运行时
+tests
+docs
+scripts
+start.bat
+Dockerfile
+docker-compose.yml
+.dockerignore

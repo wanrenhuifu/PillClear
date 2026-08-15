@@ -1,0 +1,49 @@
+# PillClear 本地一键部署。
+#
+# 日常使用（镜像已内置种子库 seed/pillclear.db，无需入库）：
+#   docker compose up -d --build                     # 启动服务 → http://localhost:8000
+#
+# 更新种子数据（新增说明书后，先在本机入库再刷入卷）：
+#   python -m app.knowledge.ingest data/package_inserts   # 本机跑，需 .env 的 key
+#   python scripts/make_seed_db.py                        # 生成 seed/pillclear.db
+#   docker compose down && docker compose run --rm seed-refresh
+#   docker compose up -d --build
+#
+# 升级代码后：docker compose up -d --build（用户数据在 pillclear-data 卷中不受影响）。
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # :? 语法——缺 key 时立刻报清晰错误，而不是静默降级。
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?请在 .env 或环境中提供 DEEPSEEK_API_KEY}
+    volumes:
+      - pillclear-data:/data
+    restart: unless-stopped
+
+  # 用镜像内种子库覆盖数据卷（更新 seed/pillclear.db 后：先 down 再跑它）。
+  # 顺带清掉旧 WAL/SHM，避免残留日志回放到新库上。
+  seed-refresh:
+    build: .
+    profiles: ["setup"]
+    entrypoint:
+      - sh
+      - -c
+      - "cp -f /app/seed/pillclear.db /data/pillclear.db && rm -f /data/pillclear.db-wal /data/pillclear.db-shm && echo seed refreshed"
+    volumes:
+      - pillclear-data:/data
+
+  # 可选：在容器里实时入库新说明书（消耗 LLM tokens；日常走种子库流程即可）。
+  ingest:
+    build: .
+    profiles: ["setup"]
+    command: ["python", "-m", "app.knowledge.ingest", "data/package_inserts"]
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?请在 .env 或环境中提供 DEEPSEEK_API_KEY}
+    volumes:
+      - pillclear-data:/data
+
+volumes:
+  pillclear-data:

@@ -1,0 +1,11 @@
+# Render 一键部署配置（Blueprint）：
+# 在 Render 里 New → Blueprint → 选本仓库，以下配置自动生效。
+services:
+  - type: web
+    name: pillclear
+    runtime: docker        # 自动使用仓库根目录的 Dockerfile
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: DEEPSEEK_API_KEY
+        sync: false        # 部署时 Render 弹窗让你手动填，不进仓库

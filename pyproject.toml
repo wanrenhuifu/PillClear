@@ -36,6 +36,11 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+# 规则 YAML 随包分发：非 editable 安装（如 Docker 镜像）若漏掉它们，
+# 规则引擎首次加载即 ValueError（DEFAULT_RULES_DIR 按 __file__ 相对定位）。
+[tool.setuptools.package-data]
+"app.rules" = ["data/*.yaml"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q"
