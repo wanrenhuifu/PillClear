@@ -31,7 +31,7 @@ pip install -e ".[dev]"
 cp .env.example .env
 # 编辑 .env，填 DEEPSEEK_API_KEY（唯一必填项）
 
-pytest   # 406 个测试全部通过
+pytest   # 413 个测试全部通过
 ruff check app tests   # lint
 ```
 
@@ -55,6 +55,29 @@ cd web && npx vitest run
 打开 http://localhost:5173 即可使用:聊天问诊 + 药箱检查 + 用药提醒。
 跨域部署时通过 `CORS_ORIGINS` 环境变量配置允许来源(逗号分隔,默认已含 Vite 开发端口)。
 
+## 部署(Docker)
+
+单镜像同源服务 API 与前端(多阶段构建内完成前端编译),并**内置种子库**
+(`seed/pillclear.db`,33 份说明书已入库)——构建即开箱可用,无需先跑入库:
+
+```bash
+# 启动 → http://localhost:8000(.env 里放好 DEEPSEEK_API_KEY)
+docker compose up -d --build
+```
+
+数据落在 `pillclear-data` 卷(SQLite,WAL),首次启动从镜像里的种子库自动初始化;
+重建镜像不丢用户数据,升级代码只需 `docker compose up -d --build`。
+
+**更新种子数据**(新增说明书后):本机先 `python -m app.knowledge.ingest data/package_inserts`,
+再 `python scripts/make_seed_db.py` 重新生成 `seed/pillclear.db`,提交后重新构建镜像即可。
+
+云平台(Render/Railway/Fly 等)直接投这个镜像即可:注入 `DEEPSEEK_API_KEY`(或 `LLM_API_KEY`)、
+挂持久卷到 `/data`、平台注入的 `PORT` 会被自动使用。设计依据见
+`docs/superpowers/specs/2026-08-15-docker-deployment-design.md`。
+
+> ⚠️ 公开 demo 请留意:`/chat` 每次调用都消耗你的 LLM key。对外展示建议配好用量上限,
+> 或只演示不碰 LLM 的药箱检查/用药提醒路径。
+
 ## 环境变量
 
 只需一个：`DEEPSEEK_API_KEY`。
@@ -63,7 +86,7 @@ cd web && npx vitest run
 
 ## 说明书入库
 
-29 份说明书在 `data/package_inserts/`（`.txt`，文件名 = 商品名，`【章节】` 格式）。
+33 份说明书在 `data/package_inserts/`（`.txt`，文件名 = 商品名，`【章节】` 格式）。
 
 ```bash
 python -m app.knowledge.ingest data/package_inserts           # 写库（成分抽取走 LLM）

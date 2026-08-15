@@ -21,7 +21,7 @@ python -m ruff check app tests
 pytest tests/test_ingest.py
 pytest tests/test_ingest.py::test_ingest_is_idempotent
 
-# 说明书入库（29 份 .txt 在 data/package_inserts/ 里）
+# 说明书入库（33 份 .txt 在 data/package_inserts/ 里）
 python -m app.knowledge.ingest data/package_inserts          # 写 SQLite
 python -m app.knowledge.ingest data/package_inserts --dry-run # 仅看行数/结构
 
@@ -40,8 +40,9 @@ cd web && npx vitest run                # 前端测试（Vitest + Testing Librar
 - **检索走关键词精确匹配**（`app/rag/keyword_retriever.py`），不依赖 embedding。药名精确匹配 → 模糊匹配 → 内容搜索，三级降级。embedding 仅 Postgres 路径保留
 - **LLM 默认 DeepSeek**（`llm_provider=deepseek`，默认模型 `deepseek-v4-pro`，走 `app/llm/providers.py` 预置）。多厂牌支持：openai / qwen / glm / moonshot / ollama。`Settings` 硬拒绝已废弃模型名 `deepseek-chat` / `deepseek-reasoner`（`config.py:DEPRECATED_MODELS`）
 - **Web 前端**：`web/` 是 React 18 + Vite 6 + Tailwind v4 + TanStack Query + react-router 7 的独立应用，Vitest 测试；API 客户端在 `web/src/lib/api.ts`（错误三分类 llm/http/network），用户以 localStorage 里的 `device_id` 标识（与后端药箱同键）。开发时 Vite 代理 `/api`，无需 CORS；`CORS_ORIGINS` 仅服务于直连部署。
+- **部署（Docker）**：`Dockerfile` 多阶段单镜像同源服务 API + 前端构建产物；静态服务由 `STATIC_DIR` 门控（`app/config.py`，默认空 = 不挂，开发/测试行为零变化；容器内 ENV 指向 `/app/web/dist`），catch-all 路由在全部 API 路由之后注册（`app/main.py:_mount_spa`，含目录穿越防护）。`docker compose up -d --build` 一键起（数据在 `pillclear-data` 卷）。镜像内置种子库 `seed/pillclear.db`（33 份说明书已入库，由 `scripts/make_seed_db.py` 从本机库 `VACUUM INTO` 生成并提交入库）——云平台免灌库开箱即用；更新种子数据 = 本机 ingest + make_seed_db.py + 重新构建。设计见 `docs/superpowers/specs/2026-08-15-docker-deployment-design.md`。
 - **lint 走 ruff**（配置在 `pyproject.toml [tool.ruff]`：F/E/W/I/UP/B/SIM/PLC/RUF；中文标点误报 RUF001-003 与 E501 已豁免，FastAPI `Depends` 惯用法经 `extend-immutable-calls` 豁免）；质量闸门 = ruff + pytest + golden 比对，CI 由 `.github/workflows/ci.yml` 承担（后端 pytest+ruff / 前端 vitest+build）。
-- **改动后的最小验证（每次必做）**：每次完成代码改动后，在交付/提交前必须运行——① 先跑受影响的测试文件，例如 `pytest tests/test_chat_pipeline.py`（替换为实际受影响的文件）；② 通过后按需跑全量 `pytest`（基线 406，低于基线立即排查）；③ golden 文案变红（`tests/test_prompts_golden.py`）= 行为变更，先确认是有意改动，再按下方 golden 条目的重生成流程处理，禁止悄悄改测试凑绿。不引入新工具、不改业务代码；验证就是已有的 pytest + golden 流程。本地 git pre-commit 钩子已把该验证接成提交前必过项（克隆后跑一次 `python scripts/install_hooks.py` 安装；逻辑在 `scripts/pre_commit_check.py`）：自动跑 staged 改动映射出的受影响测试文件 + `ruff check app tests`，任一失败即阻断提交；无法映射时才回退全量。
+- **改动后的最小验证（每次必做）**：每次完成代码改动后，在交付/提交前必须运行——① 先跑受影响的测试文件，例如 `pytest tests/test_chat_pipeline.py`（替换为实际受影响的文件）；② 通过后按需跑全量 `pytest`（基线 413，低于基线立即排查）；③ golden 文案变红（`tests/test_prompts_golden.py`）= 行为变更，先确认是有意改动，再按下方 golden 条目的重生成流程处理，禁止悄悄改测试凑绿。不引入新工具、不改业务代码；验证就是已有的 pytest + golden 流程。本地 git pre-commit 钩子已把该验证接成提交前必过项（克隆后跑一次 `python scripts/install_hooks.py` 安装；逻辑在 `scripts/pre_commit_check.py`）：自动跑 staged 改动映射出的受影响测试文件 + `ruff check app tests`，任一失败即阻断提交；无法映射时才回退全量。
 - **测试全程 mock**，HTTP/LLM 调用一律 mock，不打真实网络：`respx_mock` fixture 由 respx 插件自动提供，`conftest.py` 只有 `make_completion()` 响应构造器和一个 `settings()` fixture（`_env_file=None`，套件与开发机 `.env` 无关）。每个用例自建 `:memory:` SQLite，不落盘。`tests/test_medbox_api.py` 刻意不挂 respx——以「装不了 mock」断言药箱路径全程不碰 LLM。
 - **「叠加」有两条独立机制，别混淆**：① `app/medbox/calculator.py` 纯函数（`check_overlap` / `calculate_ingredient_totals`，单位归一化走 `app/core/units.py:to_mg`）按成分求和、对照硬编码 `_DAILY_LIMITS`（对乙酰氨基酚 4000mg 等）算日总摄入量；② `app/rules/data/overlap.yaml` 的规则引擎告警。规则 YAML 共三份：`overlap`（重复成分）/ `interaction`（药-药）/ `alcohol`（药-物质），warning 文案里的 `{count}`/`{total_mg}` 由 `engine.format_warning` 运行期填充（纯代码，无 LLM）。
 - **prompt 模板有 golden 逐字比对**（`tests/test_prompts_golden.py` + `tests/golden/`，14 份）：任何文案漂移立刻变红；**有意**改文案时重新生成并在 commit 说明改动（Unix：`PILLCLEAR_REGEN_GOLDEN=1 python -m pytest tests/test_prompts_golden.py`；PowerShell：`$env:PILLCLEAR_REGEN_GOLDEN=1; python -m pytest tests/test_prompts_golden.py; Remove-Item env:PILLCLEAR_REGEN_GOLDEN`）

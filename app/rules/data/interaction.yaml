@@ -17,6 +17,18 @@ rules:
     confidence: medium
     source: "FDA: Ibuprofen and aspirin interaction"
 
+  - id: antihistamine-duplication
+    title: 氯雷他定 + 西替利嗪
+    severity: warning
+    description: 两种第二代抗组胺药同服不增效，反而叠加不良反应
+    conditions:
+      ingredients:
+        - name: 氯雷他定
+        - name: 盐酸西替利嗪
+    warning: "⚠️ 氯雷他定与西替利嗪同属第二代抗组胺药，同服并不能增强抗过敏效果，反而会增加嗜睡、口干等不良反应。请只选其中一种；若单药控制不住，请咨询医生或药师调整方案。"
+    confidence: medium
+    source: "抗组胺药临床应用共识：第二代抗组胺药不建议两药同服"
+
   - id: st-johns-wort-contraceptive
     title: 圣约翰草 + 口服避孕药
     severity: warning

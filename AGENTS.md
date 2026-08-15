@@ -17,7 +17,7 @@ This file provides guidance to Lingma (lingma.aliyun.com) when working with code
 ```bash
 pip install -e ".[dev]"          # 安装依赖（Python 3.12+）
 
-pytest                            # 全部测试（基线 406，低于基线立即排查）
+pytest                            # 全部测试（基线 413，低于基线立即排查）
 pytest tests/test_ingest.py       # 单个测试文件
 pytest tests/test_ingest.py::test_ingest_is_idempotent   # 单个用例
 
@@ -30,6 +30,8 @@ uvicorn app.main:app --reload     # 后端 API（:8000）
 
 cd web && npm install && npm run dev   # 前端（:5173，/api 代理到后端）
 cd web && npx vitest run               # 前端测试
+
+docker compose up -d --build   # Docker 部署（:8000，镜像内置种子库 seed/pillclear.db，免入库）
 ```
 
 Windows 一键启动：`start.bat`（同时拉起前后端）。
@@ -41,7 +43,7 @@ Windows 一键启动：`start.bat`（同时拉起前后端）。
 **每次完成代码改动后**，在交付/提交前必须运行：
 
 1. 先跑受影响的测试文件，例如 `pytest tests/test_chat_pipeline.py`（替换为实际受影响的文件）；
-2. 通过后按需跑全量 `pytest`（基线 406，低于基线立即排查）；
+2. 通过后按需跑全量 `pytest`（基线 413，低于基线立即排查）；
 3. golden 文案变红（`tests/test_prompts_golden.py`）= 行为变更，先确认是有意改动，再按下方「Golden 测试重新生成」流程处理，**严禁悄悄改测试凑绿**。
 
 不引入新工具、不改业务代码；验证就是上面已有的 pytest + golden 流程。本地 git pre-commit 钩子已把该验证接成提交前必过项（克隆后跑一次 `python scripts/install_hooks.py` 安装；逻辑在 `scripts/pre_commit_check.py`，随版本库更新）：自动跑 staged 改动映射出的受影响测试文件 + `ruff check app tests`，任一失败即阻断提交；无法映射时才回退全量。
@@ -66,6 +68,8 @@ $env:PILLCLEAR_REGEN_GOLDEN=1; python -m pytest tests/test_prompts_golden.py; Re
 | `PILLCLEAR_BACKEND` | `""` 自动 / `supabase` / `sqlite`，显式锁定后端，拼写错误被 Settings 拒绝 |
 | `LLM_PROVIDER` / `LLM_MODEL` / `LLM_BASE_URL` | LLM 厂牌/模型覆盖；`DEPRECATED_MODELS` 硬拒绝废弃模型名 |
 | `CORS_ORIGINS` | 逗号分隔；留空 = 不挂 CORS 中间件（Vite 代理开发时不需要） |
+| `STATIC_DIR` | 前端构建产物目录；`""`（默认）= 不服务静态文件，开发/测试零变化；部署时指向 `web/dist`（Docker 内置 `/app/web/dist`），由 `main.py:_mount_spa` 同源服务 |
+| `DATA_DIR` | SQLite 数据目录；留空按平台自动解析；Docker 挂卷时设为 `/data` |
 
 ## 核心架构
 
@@ -81,7 +85,7 @@ GET/POST/DELETE /api/v1/reminders/{device_id}[/items[/{drug_id}]]
 
 **跨文件才能看清的分层**：
 
-- `app/main.py:create_app()` 是工厂：挂三个路由（前缀 `/api/v1`）+ 可选 CORS；模块级 `app = create_app()` 供 uvicorn 使用。
+- `app/main.py:create_app()` 是工厂：挂三个路由（前缀 `/api/v1`）+ 可选 CORS + 可选 SPA 静态服务（`static_dir` 非空时 `_mount_spa` 在全部路由之后注册 catch-all，服务前端产物 + history 回退，含目录穿越防护）；模块级 `app = create_app()` 供 uvicorn 使用。
 - `app/chat/pipeline.py:process_chat()` 是**纯同步编排器，零 Web 框架依赖**，可直接脱离 HTTP 测试；`app/api/routes.py` 只是薄适配器（`run_in_threadpool` + `LLMRetryExhausted` → HTTP 502）。
 - `app/api/deps.py` 是**后端解析 + 依赖注入的唯一缝隙**：`_resolve_backend()` 按 `DATABASE_URL` 选 sqlite/supabase，工厂返回对应检索器（`KeywordRetriever` 默认 / `PgVectorRetriever`+`Embedder` Postgres / `NullRetriever`）与仓储（`SQLite*` / `Postgres*` / `InMemory*`）。换后端只动这里。注意有意分歧：`get_retriever` 在「未锁定后端但设了 `DATABASE_URL`」时仍启用 PgVectorRetriever。
 - 数据库 schema 在 `migrations/*.sql`（0001 建表 / 0002 embedding 非空 / 0003 药箱表 / 0004 提醒表），非 ORM。药箱与提醒均以 `device_id` 标识用户（MVP 无登录）。
@@ -116,3 +120,13 @@ GET/POST/DELETE /api/v1/reminders/{device_id}[/items[/{drug_id}]]
 - `CONTEXT.md` 定义产品/商品名/成分/物质/叠加/相互作用等术语的确切边界。新增概念先查词汇表。注意：「叠加」≠「冲突」（冲突专指相互作用）；保健品按「产品」同构建模，不单列实体（ADR-0001，`docs/adr/`）；代码里 `Drug`/`drugs` 是「产品」的历史命名。
 - 设计 spec 与实施计划按日期归档在 `docs/superpowers/specs/` 与 `docs/superpowers/plans/`，新特性沿用该流程。
 - 用药提醒已落地（`app/reminder/`）：Protocol 仓储三实现（InMemory/SQLite/Postgres），SQLite 共享药箱的连接与锁；时刻校验 `HH:MM`（Pydantic `pattern` 必须挂在 `Annotated` 元素类型上，不能挂 list 字段）；`next_due(times, now)` 显式注入 now 保持纯函数。
+
+## 已知缺口（候选后续工作，2026-08-15 盘点）
+
+产品/工程层面的未完成项（非 bug，是明确推迟或未启动的范围）：
+
+1. ~~无部署路径~~ **已解决（2026-08-15）**：Dockerfile 多阶段单镜像同源服务 API+前端（`STATIC_DIR` 门控，默认空不影响开发/测试），镜像内置种子库 `seed/pillclear.db`（33 份说明书，`scripts/make_seed_db.py` 从本机库 VACUUM 生成）——云平台免入库开箱即用；`docker compose up -d --build` 一键起。设计见 `docs/superpowers/specs/2026-08-15-docker-deployment-design.md`。
+2. **无登录**：用户 = localStorage 里的匿名 `device_id`；聊天历史仅存内存，刷新即失（均为 spec 声明的非目标）。
+3. **知识库薄**：规则仅 7 条（`app/rules/data/`：interaction 3 / overlap 2 / alcohol 2）；说明书 33 份（含 2026-08-15 从百度百科补充的泰诺林/快克/拜阿司匹灵/连花清瘟胶囊，种子库已同步）；`ingredients_verified` 恒 false（LLM 抽取成分未经人工核验）。
+4. **无流式输出 / 无可观测性**：聊天为单次响应（前端 `AssistantLoading` 占位）；仅 stdlib logging，无结构化日志/错误追踪；`/api/v1/health` 已有但无监控接入。
+5. **安全盲区**（发热正则 10 字窗口、「月经期」未入特殊人群、无分词导致子串误命中如「泰诺林里的泰诺」等）均被 golden/near-miss 测试锁定，清单在 `docs/refactor-readiness.md`——修复任一项都是行为变更，须显式决策，严禁悄悄改测试。
